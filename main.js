@@ -1,18 +1,28 @@
 // $100,000 opening scene prototype.
 // Mixed reality: a $100 bill falls from the ceiling, a seagull flies out of a
-// portal, grabs it and flies back in, then the portal glides over the player
-// so they end up inside the splat world.
+// portal standing in the room's entrance, grabs it and flies back in, then the
+// player flies through the portal and on toward the table.
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 
 const params = new URLSearchParams(location.search);
-const WORLD_YAW = THREE.MathUtils.degToRad(Number(params.get('yaw')) || 0);
 const USE_LOD = params.get('lod') !== '0';
 const DEBUG = params.has('debug');
 
-// Room scan: standing spot and floor height in the scan's own coordinates
-// (y points down in the scan, so it gets flipped).
-const SCAN_SPAWN = new THREE.Vector3(-31.5, -10.75, 131.3);
+// Room scan landmarks, as (x, z) in the scan's own coordinates. The scan has
+// y pointing down with the floor at y = 0, so it gets flipped upright.
+const ENTRANCE = new THREE.Vector2(2.25, 0.2);   // centre of the doorway in the long wall
+const TARGETS = {
+  table: { at: new THREE.Vector2(-0.47, -3.0), stop: 1.4 }, // coffee table between the pink poufs
+  desk: { at: new THREE.Vector2(-1.63, 0.18), stop: 1.4 },  // desk in front of the window
+};
+const TARGET = TARGETS[params.get('to')] || TARGETS.table;
+const PORTAL_DIST = 1.05; // portal distance in front of the player, and from the doorway on the outside
+
+// Flight line: from just outside the doorway, through it, toward the target.
+const FLY_DIR = new THREE.Vector2().subVectors(TARGET.at, ENTRANCE).normalize();
+const SCAN_START = ENTRANCE.clone().addScaledVector(FLY_DIR, -PORTAL_DIST);
+const FLY_DIST = SCAN_START.distanceTo(TARGET.at) - TARGET.stop;
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -83,35 +93,91 @@ const portalMask = new THREE.Mesh(
 portalMask.renderOrder = -100;
 portal.add(portalMask);
 
+// Border: a thin bright line with a faint halo, plus sparks riding the rim.
+// The portal group is scaled to its radius, so widths are divided by it to
+// stay a constant few millimetres.
 const ringMaterial = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-  uniforms: { time: { value: 0 }, opacity: { value: 1 } },
+  uniforms: { time: { value: 0 }, opacity: { value: 1 }, radius: { value: 1 } },
   vertexShader: /* glsl */`
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    varying vec2 vPos;
+    void main() { vPos = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */`
-    uniform float time; uniform float opacity; varying vec2 vUv;
+    uniform float time; uniform float opacity; uniform float radius; varying vec2 vPos;
     void main() {
-      vec2 p = vUv * 2.0 - 1.0;
-      float r = length(p);
-      float a = atan(p.y, p.x);
-      float band = smoothstep(0.80, 0.97, r) * (1.0 - smoothstep(1.0, 1.32, r));
-      float swirl = 0.55 + 0.45 * sin(a * 9.0 - time * 5.0 + r * 18.0);
-      float sparks = pow(max(0.0, sin(a * 23.0 + time * 7.0)), 18.0) * smoothstep(0.9, 1.05, r);
-      vec3 gold = vec3(1.0, 0.78, 0.30);
-      vec3 mint = vec3(0.45, 1.0, 0.65);
-      vec3 col = mix(mint, gold, swirl) * band * (0.6 + 0.6 * swirl) + gold * sparks;
+      float r = length(vPos);
+      float a = atan(vPos.y, vPos.x);
+      float w = 0.003 / radius;
+      float x = (r - 1.0) / w;
+      float core = exp(-x * x);
+      float halo = exp(-abs(x) / 9.0) * 0.22;
+      float shimmer = 0.7 + 0.3 * sin(a * 37.0 - time * 2.6) * sin(a * 5.0 + time * 1.1);
+      vec3 col = vec3(1.0, 0.93, 0.78) * core + vec3(1.0, 0.72, 0.32) * halo * shimmer;
       gl_FragColor = vec4(col * opacity, 1.0);
     }`,
 });
-const ring = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 2.7), ringMaterial);
+const ring = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 2.3), ringMaterial);
 ring.renderOrder = 10;
 portal.add(ring);
 
+const SPARKS = 110;
+const sparkGeo = new THREE.BufferGeometry();
+{
+  const seed = new Float32Array(SPARKS * 4);
+  for (let i = 0; i < SPARKS; i++) {
+    seed.set([Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.9, Math.random(), 0.4 + Math.random() * 0.9], i * 4);
+  }
+  sparkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SPARKS * 3), 3));
+  sparkGeo.setAttribute('seed', new THREE.BufferAttribute(seed, 4));
+}
+const sparkMaterial = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  uniforms: ringMaterial.uniforms,
+  vertexShader: /* glsl */`
+    uniform float time; uniform float radius;
+    attribute vec4 seed; // start angle, angular speed, phase, life rate
+    varying float vAlpha;
+    void main() {
+      float life = fract(time * seed.w * 0.6 + seed.z);
+      float a = seed.x + seed.y * time;
+      // Born on the rim, drift a few centimetres outward and fade.
+      float r = 1.0 + (life * 0.045) / radius;
+      vec4 mv = modelViewMatrix * vec4(cos(a) * r, sin(a) * r, 0.0, 1.0);
+      float twinkle = 0.5 + 0.5 * sin(time * 23.0 * seed.w + seed.z * 40.0);
+      vAlpha = (1.0 - life) * (0.35 + 0.65 * twinkle);
+      gl_PointSize = 1300.0 * 0.006 * (1.2 - life) / max(0.05, -mv.z);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: /* glsl */`
+    uniform float opacity; varying float vAlpha;
+    void main() {
+      vec2 c = gl_PointCoord - 0.5;
+      float d = exp(-dot(c, c) * 22.0);
+      gl_FragColor = vec4(vec3(1.0, 0.86, 0.55) * d * vAlpha * opacity, 1.0);
+    }`,
+});
+const sparks = new THREE.Points(sparkGeo, sparkMaterial);
+sparks.frustumCulled = false;
+sparks.renderOrder = 11;
+ring.add(sparks);
+
 // ---------- splat world ----------
 
+// worldRoot follows the anchor; flyGroup slides the room toward the player;
+// alignGroup turns the flight line to face forward; scanGroup puts the start
+// point (just outside the doorway) at the player's feet.
 const worldRoot = new THREE.Group();
 scene.add(worldRoot);
+const flyGroup = new THREE.Group();
+worldRoot.add(flyGroup);
+const alignGroup = new THREE.Group();
+// Upright coordinates are (x, -y, -z) of the scan.
+alignGroup.quaternion.setFromUnitVectors(
+  new THREE.Vector3(FLY_DIR.x, 0, -FLY_DIR.y), new THREE.Vector3(0, 0, -1));
+flyGroup.add(alignGroup);
+const scanGroup = new THREE.Group();
+scanGroup.position.set(-SCAN_START.x, 0, SCAN_START.y);
+alignGroup.add(scanGroup);
 
 const skyGeo = new THREE.SphereGeometry(60, 48, 24);
 {
@@ -143,8 +209,7 @@ const room = new SplatMesh({
   },
 });
 room.rotation.x = Math.PI;
-room.position.set(-SCAN_SPAWN.x, SCAN_SPAWN.y, SCAN_SPAWN.z);
-worldRoot.add(room);
+scanGroup.add(room);
 
 // A plain room stands in for passthrough when previewing on a flat screen.
 const fakeRoom = new THREE.Group();
@@ -352,11 +417,11 @@ const T_PORTAL = 1.2;      // portal starts opening
 const T_GULL_OUT = 2.2;    // gull leaves the portal
 const T_GRAB = 4.2;        // gull catches the bill
 const T_GULL_IN = 5.6;     // gull is back through the portal
-const T_GLIDE = 4.5;       // portal starts gliding toward the player
-const GLIDE_DUR = 3.5;
-const T_HINT = 10.5;
+const T_GLIDE = 4.5;       // player starts flying through the portal
+const GLIDE_DUR = Math.max(3.5, FLY_DIST / 0.8); // ~0.8 m/s average
+const T_HINT = T_GLIDE + GLIDE_DUR + 1.5;
 
-const PORTAL_Z = -1.05, PORTAL_R = 0.55, PORTAL_END_Z = 0.9, PORTAL_END_R = 1.5;
+const PORTAL_Z = -PORTAL_DIST, PORTAL_R = 0.55, PORTAL_END_R = 1.3;
 
 const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const easeOutBack = (x) => 1 + 2.2 * Math.pow(x - 1, 3) + 1.2 * Math.pow(x - 1, 2);
@@ -376,12 +441,16 @@ function billPose(tb, out) {
 const scratchBill = new THREE.Object3D();
 function billPositionAt(tb) { billPose(tb, scratchBill); return scratchBill.position.clone(); }
 
+// The portal sits in the doorway, so it travels with the room as the player
+// flies in; it widens as it reaches the player so it passes around the head.
 function portalPoseAt(t) {
-  const g = easeInOut(clamp01((t - T_GLIDE) / GLIDE_DUR));
+  const fly = FLY_DIST * easeInOut(clamp01((t - T_GLIDE) / GLIDE_DUR));
+  const reach = clamp01(fly / PORTAL_DIST);
   return {
-    z: THREE.MathUtils.lerp(PORTAL_Z, PORTAL_END_Z, g),
-    y: state.eye - 0.08 + 0.08 * g,
-    r: THREE.MathUtils.lerp(PORTAL_R, PORTAL_END_R, g) * easeOutBack(clamp01((t - T_PORTAL) / 1.2)),
+    fly,
+    z: PORTAL_Z + fly,
+    y: state.eye - 0.08 + 0.08 * reach,
+    r: THREE.MathUtils.lerp(PORTAL_R, PORTAL_END_R, reach) * easeOutBack(clamp01((t - T_PORTAL) / 1.2)),
   };
 }
 
@@ -399,7 +468,8 @@ function startSequence() {
   anchor.position.set(headPos.x, 0, headPos.z);
   anchor.rotation.set(0, yaw, 0);
   worldRoot.position.copy(anchor.position);
-  worldRoot.rotation.set(0, yaw + WORLD_YAW, 0);
+  worldRoot.rotation.set(0, yaw, 0);
+  flyGroup.position.set(0, 0, 0);
   state.eye = THREE.MathUtils.clamp(headPos.y, 1.0, 1.9);
 
   grabPoint = billPositionAt(T_GRAB - T_BILL);
@@ -437,10 +507,12 @@ function update(t, dt) {
   if (!state.running) return;
   const T = state.fixedT ?? (t - state.start);
 
-  // Portal: open, then glide over the player.
+  // Portal opens in the doorway; then the room (portal included) flies to the player.
   const pp = portalPoseAt(T);
+  flyGroup.position.z = pp.fly;
   portal.position.set(0, pp.y, pp.z);
   portal.scale.setScalar(Math.max(0.0001, pp.r));
+  ringMaterial.uniforms.radius.value = Math.max(0.05, pp.r);
   portal.visible = T > T_PORTAL;
 
   // Crossing: once the head is on the far side of the portal plane, show the
@@ -484,14 +556,15 @@ function update(t, dt) {
       flap(T, u > 0.75 ? 0.35 : 1);
     } else {
       // Rebuild the return path each frame: the portal is already moving.
+      // The far points sit in the room, so they ride along with the flight.
       const c = new THREE.Vector3(0, pp.y, pp.z);
       gullInCurve.points = [
         grabPoint.clone().add(new THREE.Vector3(0, 0.03, -0.02)),
         new THREE.Vector3(grabPoint.x - 0.05, grabPoint.y + 0.4, grabPoint.z - 0.2),
         c.clone().add(new THREE.Vector3(0.05, 0.05, 0.25)),
         c.clone().add(new THREE.Vector3(0, 0, -0.4)),
-        c.clone().add(new THREE.Vector3(-0.6, 1.0, -3.0)),
-        c.clone().add(new THREE.Vector3(-1.5, 2.2, -7.0)),
+        c.clone().add(new THREE.Vector3(-0.4, 0.6, -2.0)),
+        c.clone().add(new THREE.Vector3(-0.8, 1.3, -4.0)),
       ];
       const u = clamp01((T - T_GRAB) / ((T_GULL_IN - T_GRAB) * 2.6));
       const uu = u < 0.5 ? 2 * u * u : u; // speed up on take-off
