@@ -4,10 +4,13 @@
 // player flies through the portal and on toward the table.
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+import { Video180 } from './video.js';
 
 const params = new URLSearchParams(location.search);
 const USE_LOD = params.get('lod') !== '0';
 const DEBUG = params.has('debug');
+const FLY_SPEED = Number(params.get('speed')) || 0.4; // m/s, constant
+const VIDEO_SRC = params.get('video') || './video/';
 
 // Room scan landmarks, as (x, z) in the scan's own coordinates. The scan has
 // y pointing down with the floor at y = 0, so it gets flipped upright.
@@ -357,12 +360,14 @@ const handMesh = new THREE.InstancedMesh(
 handMesh.frustumCulled = false;
 handMesh.visible = false;
 scene.add(handMesh);
+const fingertips = [];
 const tmpMat = new THREE.Matrix4(), tmpPos = new THREE.Vector3(), tmpQuat = new THREE.Quaternion(), tmpScale = new THREE.Vector3();
 
 function updateHands(frame) {
   const session = renderer.xr.getSession();
   const ref = renderer.xr.getReferenceSpace();
   let n = 0;
+  fingertips.length = 0;
   if (session && frame && ref && frame.getJointPose) {
     for (const src of session.inputSources) {
       if (!src.hand) continue;
@@ -374,6 +379,7 @@ function updateHands(frame) {
         tmpPos.set(p.x, p.y, p.z); tmpQuat.set(o.x, o.y, o.z, o.w);
         tmpScale.setScalar(Math.max(0.006, pose.radius || 0.008));
         handMesh.setMatrixAt(n++, tmpMat.compose(tmpPos, tmpQuat, tmpScale));
+        if (name === 'index-finger-tip') fingertips.push(tmpPos.clone());
       }
     }
   }
@@ -401,9 +407,76 @@ function makeLabel(width = 512, height = 128) {
   };
   return mesh;
 }
+// ---------- play button and 180 video ----------
+
+const video = new Video180({ renderer, scene, src: VIDEO_SRC });
+video.ready.catch((err) => console.warn('Video not available:', err.message || err));
+
+const playBall = new THREE.Group();
+{
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.11, 48, 32), new THREE.MeshStandardMaterial({
+    color: 0xf2c45a, metalness: 0.65, roughness: 0.22, emissive: 0x3a2a05,
+  }));
+  playBall.add(ball);
+  // Play triangle, always turned toward the viewer.
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.028, -0.036); shape.lineTo(0.042, 0); shape.lineTo(-0.028, 0.036); shape.closePath();
+  const icon = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  icon.position.z = 0.112;
+  const iconPivot = new THREE.Group();
+  iconPivot.add(icon);
+  playBall.add(iconPivot);
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.42), new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: ringMaterial.uniforms,
+    vertexShader: /* glsl */`
+      varying vec2 vPos;
+      void main() { vPos = position.xy / 0.21; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */`
+      uniform float time; varying vec2 vPos;
+      void main() {
+        float r = length(vPos);
+        float g = smoothstep(1.0, 0.5, r) * smoothstep(0.45, 0.55, r) * (0.55 + 0.25 * sin(time * 2.5));
+        gl_FragColor = vec4(vec3(1.0, 0.75, 0.3) * g, 1.0);
+      }`,
+  }));
+  iconPivot.add(halo);
+  playBall.userData = { ball, iconPivot, pressedAt: -1 };
+  playBall.visible = false;
+  anchor.add(playBall);
+}
+
 const hint = makeLabel();
-hint.userData.draw('Pinch to replay');
+hint.userData.draw('Touch the ball to play');
+hint.scale.setScalar(0.6);
 anchor.add(hint);
+
+function startVideo() {
+  if (video.playing || !playBall.visible) return;
+  playBall.userData.pressedAt = performance.now() / 1000;
+  hint.visible = false;
+  // Centre the 180 on the viewer's head, facing the way the room faces.
+  const head = (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
+  head.updateMatrixWorld(true);
+  const pose = new THREE.Object3D();
+  pose.position.setFromMatrixPosition(head.matrixWorld);
+  pose.quaternion.copy(anchor.quaternion);
+  setTimeout(() => {
+    worldRoot.visible = spark.visible = false;
+    playBall.visible = false;
+    video.play(pose).catch((err) => {
+      console.warn('Video failed:', err);
+      if (video.playing) video.stop();
+      else video.onEnded();
+    });
+  }, 450);
+}
+video.onEnded = () => {
+  worldRoot.visible = spark.visible = true;
+  playBall.visible = true;
+  playBall.userData.pressedAt = -1;
+  hint.visible = true;
+};
 
 const fpsLabel = makeLabel(320, 96);
 fpsLabel.position.set(0, -0.18, -0.6);
@@ -418,8 +491,8 @@ const T_GULL_OUT = 2.2;    // gull leaves the portal
 const T_GRAB = 4.2;        // gull catches the bill
 const T_GULL_IN = 5.6;     // gull is back through the portal
 const T_GLIDE = 4.5;       // player starts flying through the portal
-const GLIDE_DUR = Math.max(3.5, FLY_DIST / 0.8); // ~0.8 m/s average
-const T_HINT = T_GLIDE + GLIDE_DUR + 1.5;
+const GLIDE_DUR = FLY_DIST / FLY_SPEED;
+const T_HINT = T_GLIDE + GLIDE_DUR + 1.0; // play ball appears
 
 const PORTAL_Z = -PORTAL_DIST, PORTAL_R = 0.55, PORTAL_END_R = 1.3;
 
@@ -444,7 +517,8 @@ function billPositionAt(tb) { billPose(tb, scratchBill); return scratchBill.posi
 // The portal sits in the doorway, so it travels with the room as the player
 // flies in; it widens as it reaches the player so it passes around the head.
 function portalPoseAt(t) {
-  const fly = FLY_DIST * easeInOut(clamp01((t - T_GLIDE) / GLIDE_DUR));
+  // Constant speed: no easing, so there is no acceleration to feel.
+  const fly = FLY_DIST * clamp01((t - T_GLIDE) / GLIDE_DUR);
   const reach = clamp01(fly / PORTAL_DIST);
   return {
     fly,
@@ -496,6 +570,10 @@ function startSequence() {
   hint.visible = false;
   bill.visible = false;
   gull.visible = false;
+  video.stop();
+  worldRoot.visible = spark.visible = true;
+  playBall.visible = false;
+  playBall.userData.pressedAt = -1;
   portal.scale.setScalar(0.0001);
   $('replay').hidden = true;
 }
@@ -586,11 +664,28 @@ function update(t, dt) {
     gull.lookAt(anchor.localToWorld(ahead.clone()));
   }
 
-  if (T > T_HINT && state.inside && !hint.visible) {
-    hint.visible = true;
-    hint.position.set(0, state.eye - 0.25, -1.1);
+  if (T > T_HINT && state.inside && !playBall.visible && !video.playing && playBall.userData.pressedAt < 0) {
+    playBall.visible = hint.visible = true;
+    playBall.userData.shownAt = T;
+    hint.position.set(0, state.eye - 0.38, -0.62);
     if (!renderer.xr.isPresenting) $('replay').hidden = false;
   }
+  if (playBall.visible) updatePlayBall(T, t);
+}
+
+const ballWorld = new THREE.Vector3();
+function updatePlayBall(T, t) {
+  const u = playBall.userData;
+  const appear = easeOutBack(clamp01((T - u.shownAt) / 0.8));
+  const press = u.pressedAt > 0 ? clamp01((t - u.pressedAt) / 0.45) : 0;
+  playBall.position.set(0, state.eye - 0.2 + 0.025 * Math.sin(t * 1.6), -0.62);
+  playBall.scale.setScalar(Math.max(0.0001, appear * (1 + press * 0.6)));
+  u.ball.rotation.y = t * 0.4;
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  u.iconPivot.lookAt(new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld));
+  // Poke with an index fingertip.
+  playBall.getWorldPosition(ballWorld);
+  if (u.pressedAt < 0 && appear > 0.9 && fingertips.some((p) => p.distanceTo(ballWorld) < 0.13)) startVideo();
 }
 
 // ---------- startup ----------
@@ -606,6 +701,7 @@ renderer.setAnimationLoop((time, frame) => {
     camera.position.set(Math.sin(t * 0.5) * 0.04, 1.6, 0);
   }
   update(performance.now() / 1000, dt);
+  video.update();
   if (renderer.xr.isPresenting) updateHands(frame);
   if (DEBUG) {
     clock.frames++;
@@ -636,13 +732,24 @@ $('enterXr').addEventListener('click', async () => {
   try {
     const session = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['local-floor'],
-      optionalFeatures: ['hand-tracking'],
+      optionalFeatures: ['hand-tracking', 'layers'],
     });
     renderer.setClearColor(0x000000, 0);
+    video.unlock();
     await renderer.xr.setSession(session);
     $('ui').hidden = true;
     // Pinch (select) with either hand replays once the sequence has finished.
-    session.addEventListener('select', () => { if (state.inside && hint.visible) startSequence(); });
+    // Pinch while pointing at the ball also plays.
+    session.addEventListener('select', (e) => {
+      const ref = renderer.xr.getReferenceSpace();
+      const pose = e.frame.getPose(e.inputSource.targetRaySpace, ref);
+      if (!pose || !playBall.visible) return;
+      const m = new THREE.Matrix4().fromArray(pose.transform.matrix);
+      const ray = new THREE.Ray(new THREE.Vector3().setFromMatrixPosition(m),
+        new THREE.Vector3(0, 0, -1).transformDirection(m));
+      playBall.getWorldPosition(ballWorld);
+      if (ray.distanceSqToPoint(ballWorld) < 0.2 * 0.2) startVideo();
+    });
     session.addEventListener('end', () => { $('ui').hidden = false; state.running = false; });
     // Give tracking a moment to settle before reading the head pose.
     setTimeout(startSequence, 600);
@@ -652,15 +759,26 @@ $('enterXr').addEventListener('click', async () => {
 });
 
 $('preview').addEventListener('click', () => {
+  video.unlock();
   $('ui').hidden = true;
   camera.position.set(0, 1.6, 0);
   camera.rotation.set(0, 0, 0);
   startSequence();
 });
 $('replay').addEventListener('click', () => {
+  video.stop();
   camera.position.set(0, 1.6, 0);
   startSequence();
 });
+renderer.domElement.addEventListener('click', (e) => {
+  if (renderer.xr.isPresenting || !playBall.visible) return;
+  const ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  const rc = new THREE.Raycaster();
+  rc.setFromCamera(ndc, camera);
+  if (rc.intersectObject(playBall.userData.ball).length) startVideo();
+});
+window.__startVideo = startVideo;
+window.__debug = { state, playBall, video, worldRoot };
 
 // Test hook: freeze the sequence at a given time (seconds).
 window.__setSequenceTime = (T) => { state.fixedT = T; };
