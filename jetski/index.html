@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>$100,000 · Jetski race</title>
+<style>
+  :root {
+    --bg: #071a24;
+    --panel: #0e2633;
+    --fg: #eef6f7;
+    --muted: #9cb8c2;
+    --sea: #5fd3d8;
+    --gold: #f2c45a;
+  }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas { display: block; position: fixed; inset: 0; }
+  #ui { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
+  #ui[hidden] { display: none; }
+  .card { background: var(--panel); border: 1px solid #1f4252; border-radius: 14px;
+    padding: 28px; max-width: 32rem; width: 100%; box-sizing: border-box; }
+  h1 { margin: 0 0 4px; font-size: 2rem; letter-spacing: -0.01em; color: var(--gold); }
+  .sub { margin: 0 0 20px; color: var(--muted); }
+  .status { font-variant-numeric: tabular-nums; color: var(--muted); margin: 0 0 18px; min-height: 1.4em; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 14px 20px; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  #enterXr { background: var(--gold); color: #1d1606; flex: 1 1 14rem; }
+  #preview { background: transparent; color: var(--fg); border: 1px solid #2f5566; }
+  button:focus-visible { outline: 3px solid var(--sea); outline-offset: 2px; }
+  ul { margin: 18px 0 0; padding-left: 1.2em; font-size: .9rem; color: var(--muted); }
+  li { margin: 4px 0; }
+  #keys { position: fixed; left: 16px; bottom: 16px; font-size: .85rem; color: var(--muted);
+    background: rgba(7, 26, 36, .7); padding: 8px 12px; border-radius: 8px; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "../vendor/three.module.js"
+} }
+</script>
+</head>
+<body>
+<div id="ui">
+  <div class="card">
+    <h1>Jetski race</h1>
+    <p class="sub">Race Jane around the island. Two laps, ten gates.</p>
+    <p class="status" id="status">Loading…</p>
+    <div class="row">
+      <button id="enterXr" disabled>Enter VR</button>
+      <button id="preview">Preview on this screen</button>
+    </div>
+    <ul>
+      <li>Sit down. The handlebar floats just in front of you.</li>
+      <li>Make a fist around each grip to take hold. Holding the right grip is the throttle; open the right hand to slow down.</li>
+      <li>Steer by turning the bar: push one hand forward and pull the other back.</li>
+      <li>Grab the bar to start the countdown. After the finish, let go and grab again to race again.</li>
+    </ul>
+  </div>
+</div>
+<div id="keys" hidden>W or ↑ throttle · A/D or ←/→ steer · Space start / restart</div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
