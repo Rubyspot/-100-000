@@ -25,4 +25,8 @@ Encode the master into `video/` with `tools/encode-video.sh master.mp4 video 28M
 `manifest.json`, streamed with Media Source Extensions so no file exceeds
 GitHub's 100 MB limit. `?video=<url>` plays another file or folder.
 
+Straight from Google Drive (file shared as "Anyone with the link"):
+`tools/drive-to-video.sh <drive share url> video 28M` downloads, encodes and
+cleans up. Needs drive.usercontent.google.com allowed on the network.
+
 Other options: `?speed=0.4` sets the flight speed in m/s (constant).
