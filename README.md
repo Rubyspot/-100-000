@@ -20,13 +20,21 @@ while pointing at it) to play the 180° side-by-side video. On Quest it plays on
 a WebXR equirect media layer (sharp, nearly free on the GPU); elsewhere it falls
 back to a textured half sphere.
 
-Encode the master into `video/` with `tools/encode-video.sh master.mp4 video 28M`
-(needs ffmpeg). It writes 4096×2048 H.264 split into 6 s fMP4 segments plus
-`manifest.json`, streamed with Media Source Extensions so no file exceeds
-GitHub's 100 MB limit. `?video=<url>` plays another file or folder.
+Two copies, tried in order (first one the browser can decode plays):
+
+- **Original** (`ORIGINAL_SRC` in `main.js`): the master's HEVC picture copied
+  bit for bit, cut into 2 s fMP4 segments by
+  `tools/segment-original.sh master.mov out_dir`. About 1 GB per minute, so it
+  lives on an external host (needs CORS allowing the Pages origin), not in git.
+- **Fallback** (`video/` in this repo): 4096×2048 H.264 at the source frame
+  rate, `tools/encode-video.sh master.mov video 30M`.
+
+Both are streamed with Media Source Extensions from `manifest.json`, so no file
+exceeds GitHub's 100 MB limit. `?video=<folder>/` forces one source.
 
 Straight from Google Drive (file shared as "Anyone with the link"):
-`tools/drive-to-video.sh <drive share url> video 28M` downloads, encodes and
-cleans up. Needs drive.usercontent.google.com allowed on the network.
+`tools/fetch-drive.sh <drive share url> master.mov` downloads with resume;
+`tools/drive-to-video.sh <drive share url> video 30M` downloads, encodes the
+fallback and cleans up. Needs drive.usercontent.google.com allowed on the network.
 
 Other options: `?speed=0.4` sets the flight speed in m/s (constant).

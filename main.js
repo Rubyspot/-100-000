@@ -10,7 +10,11 @@ const params = new URLSearchParams(location.search);
 const USE_LOD = params.get('lod') !== '0';
 const DEBUG = params.has('debug');
 const FLY_SPEED = Number(params.get('speed')) || 0.4; // m/s, constant
-const VIDEO_SRC = params.get('video') || './video/';
+// Untouched 8K60 HEVC master (tools/segment-original.sh), too big for GitHub
+// Pages so it's hosted separately; the 4K H.264 copy in ./video/ plays wherever
+// HEVC can't. ?video=<folder>/ forces one source.
+const ORIGINAL_SRC = '';
+const VIDEO_SRC = params.get('video') || [ORIGINAL_SRC, './video/'];
 
 // Room scan landmarks, as (x, z) in the scan's own coordinates. The scan has
 // y pointing down with the floor at y = 0, so it gets flipped upright.

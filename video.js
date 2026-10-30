@@ -7,12 +7,23 @@ import * as THREE from 'three';
 
 // Streams the video as fragmented MP4 segments through Media Source Extensions,
 // so no single file has to fit GitHub's 100 MB limit. `base` holds
-// manifest.json ({ mime, init, segments, duration }) written by tools/encode-video.sh.
-async function attachSegments(video, base) {
-  const manifest = await (await fetch(base + 'manifest.json')).json();
-  if (!window.MediaSource || !MediaSource.isTypeSupported(manifest.mime)) {
-    throw new Error(`This browser can't play ${manifest.mime}`);
+// manifest.json ({ mime, init, segments, duration }) written by
+// tools/segment-original.sh (untouched 8K HEVC master) or tools/encode-video.sh
+// (4K H.264 fallback). `bases` is tried in order; the first one the browser can
+// decode wins.
+async function attachSegments(video, bases) {
+  let manifest, base;
+  for (const b of bases) {
+    try {
+      const m = await (await fetch(b + 'manifest.json')).json();
+      if (window.MediaSource && MediaSource.isTypeSupported(m.mime)) { manifest = m; base = b; break; }
+      console.info(`video: skipping ${b}, can't decode ${m.mime}`);
+    } catch (e) {
+      console.info(`video: skipping ${b}`, e);
+    }
   }
+  if (!manifest) throw new Error(`No playable video in ${bases.join(', ')}`);
+  console.info(`video: playing ${base} (${manifest.mime})`);
   const ms = new MediaSource();
   video.src = URL.createObjectURL(ms);
   await new Promise((r) => ms.addEventListener('sourceopen', r, { once: true }));
@@ -24,21 +35,34 @@ async function attachSegments(video, base) {
   sb.appendBuffer(await fetchBytes(manifest.init));
   await appended();
 
-  let next = 0, busy = false;
-  const AHEAD = 24, BEHIND = 10; // seconds kept buffered around the playhead
+  // Keep about BUDGET bytes buffered ahead of the playhead: the 8K master runs
+  // ~16 MB/s and browsers cap a SourceBuffer at a few hundred MB.
+  const BUDGET = 120e6, BEHIND = 3;
+  const segSec = manifest.duration / manifest.segments.length;
+  let ahead = 24, next = 0, busy = false;
   async function pump() {
     if (busy || ms.readyState !== 'open') return;
     busy = true;
     try {
       const end = sb.buffered.length ? sb.buffered.end(sb.buffered.length - 1) : 0;
-      if (video.currentTime - BEHIND > 1 && sb.buffered.length && sb.buffered.start(0) < video.currentTime - BEHIND) {
+      if (sb.buffered.length && sb.buffered.start(0) < video.currentTime - BEHIND - 1) {
         sb.remove(0, video.currentTime - BEHIND);
         await appended();
       }
-      if (next < manifest.segments.length && end - video.currentTime < AHEAD) {
-        const bytes = await fetchBytes(manifest.segments[next++]);
-        sb.appendBuffer(bytes);
-        await appended();
+      if (next < manifest.segments.length && end - video.currentTime < ahead) {
+        const bytes = await fetchBytes(manifest.segments[next]);
+        ahead = Math.max(2 * segSec, Math.min(24, BUDGET / (bytes.length / segSec)));
+        try {
+          sb.appendBuffer(bytes);
+          await appended();
+          next++;
+        } catch (e) {
+          if (e.name !== 'QuotaExceededError') throw e;
+          ahead = Math.max(2 * segSec, ahead / 2); // buffer full: retry this segment later
+          busy = false;
+          setTimeout(pump, 500);
+          return;
+        }
       } else if (next >= manifest.segments.length) {
         ms.endOfStream();
         return;
@@ -108,8 +132,9 @@ export class Video180 {
   }
 
   async load() {
-    if (/\.(mp4|webm|mov)$/i.test(this.src)) this.video.src = this.src;
-    else await attachSegments(this.video, this.src);
+    const srcs = [].concat(this.src).filter(Boolean);
+    if (srcs.length === 1 && /\.(mp4|webm|mov)$/i.test(srcs[0])) this.video.src = srcs[0];
+    else await attachSegments(this.video, srcs);
   }
 
   // Call inside a user gesture (the Enter button) so later play() calls are allowed with sound.
