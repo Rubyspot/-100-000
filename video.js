@@ -146,7 +146,9 @@ export class Video180 {
 
   // pose: THREE.Object3D whose world position/rotation is the viewer's head
   // position and forward direction when the video starts.
-  async play(pose) {
+  // rig: optional parent of the camera; the media layer lives in XR
+  // reference space, which moves with it.
+  async play(pose, rig = null) {
     await this.ready;
     const { renderer, video } = this;
     this.playing = true;
@@ -161,9 +163,13 @@ export class Video180 {
       this.layer = binding.createEquirectLayer(video, {
         space: renderer.xr.getReferenceSpace(),
         layout: 'stereo-left-right',
-        transform: new XRRigidTransform(
-          { x: pos.x, y: pos.y, z: pos.z },
-          { x: quat.x, y: quat.y, z: quat.z, w: quat.w }),
+        transform: (() => {
+          const m = pose.matrixWorld.clone();
+          if (rig) m.premultiply(rig.matrixWorld.clone().invert());
+          const p = new THREE.Vector3(), q = new THREE.Quaternion();
+          m.decompose(p, q, new THREE.Vector3());
+          return new XRRigidTransform({ x: p.x, y: p.y, z: p.z }, { x: q.x, y: q.y, z: q.z, w: q.w });
+        })(),
         radius: 0, // infinitely far, no parallax with head movement
         centralHorizontalAngle: Math.PI,
         upperVerticalAngle: Math.PI / 2,

@@ -38,3 +38,11 @@ Straight from Google Drive (file shared as "Anyone with the link"):
 fallback and cleans up. Needs drive.usercontent.google.com allowed on the network.
 
 Other options: `?speed=0.4` sets the flight speed in m/s (constant).
+
+## Scene hooks
+
+`window.sceneApi` exposes the scene to other modules (the Jane avatar):
+`scene`, `renderer`, `camera`, `rig` (camera parent; the flight moves it),
+`anchor`, `listener`, `showPlayBall(on)`, `playVideo()`, `arrivalPose()`, and
+`autoPlayBall` (set false to control when the play ball shows). Window events:
+`scene:arrived`, `scene:video-start`, `scene:video-end`.

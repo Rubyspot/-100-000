@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { Video180 } from './video.js';
+import { GullVoice } from './audio.js';
 
 const params = new URLSearchParams(location.search);
 const USE_LOD = params.get('lod') !== '0';
@@ -48,7 +49,13 @@ document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
 camera.position.set(0, 1.6, 0);
-scene.add(camera);
+// The player rig: the flight moves this, so the room's splats stay put (moving
+// the room instead makes Spark re-place every splat each frame).
+const rig = new THREE.Group();
+rig.add(camera);
+scene.add(rig);
+const listener = new THREE.AudioListener();
+camera.add(listener);
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
@@ -86,6 +93,13 @@ function setWorldMasked(masked) {
   for (const m of worldMaterials) m.stencilFunc = masked ? THREE.EqualStencilFunc : THREE.AlwaysStencilFunc;
 }
 
+// Pure additive in colour and alpha. With the default additive mode a glow
+// quad writes alpha 1 everywhere and shows as a black square in passthrough.
+const GLOW_BLEND = {
+  blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+  blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+};
+
 const portal = new THREE.Group();
 anchor.add(portal);
 
@@ -104,7 +118,7 @@ portal.add(portalMask);
 // The portal group is scaled to its radius, so widths are divided by it to
 // stay a constant few millimetres.
 const ringMaterial = new THREE.ShaderMaterial({
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  transparent: true, depthWrite: false, ...GLOW_BLEND, side: THREE.DoubleSide,
   uniforms: { time: { value: 0 }, opacity: { value: 1 }, radius: { value: 1 } },
   vertexShader: /* glsl */`
     varying vec2 vPos;
@@ -120,7 +134,8 @@ const ringMaterial = new THREE.ShaderMaterial({
       float halo = exp(-abs(x) / 9.0) * 0.22;
       float shimmer = 0.7 + 0.3 * sin(a * 37.0 - time * 2.6) * sin(a * 5.0 + time * 1.1);
       vec3 col = vec3(1.0, 0.93, 0.78) * core + vec3(1.0, 0.72, 0.32) * halo * shimmer;
-      gl_FragColor = vec4(col * opacity, 1.0);
+      col *= opacity;
+      gl_FragColor = vec4(col, min(1.0, max(col.r, max(col.g, col.b))));
     }`,
 });
 const ring = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 2.3), ringMaterial);
@@ -138,7 +153,7 @@ const sparkGeo = new THREE.BufferGeometry();
   sparkGeo.setAttribute('seed', new THREE.BufferAttribute(seed, 4));
 }
 const sparkMaterial = new THREE.ShaderMaterial({
-  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  transparent: true, depthWrite: false, ...GLOW_BLEND,
   uniforms: ringMaterial.uniforms,
   vertexShader: /* glsl */`
     uniform float time; uniform float radius;
@@ -160,7 +175,8 @@ const sparkMaterial = new THREE.ShaderMaterial({
     void main() {
       vec2 c = gl_PointCoord - 0.5;
       float d = exp(-dot(c, c) * 22.0);
-      gl_FragColor = vec4(vec3(1.0, 0.86, 0.55) * d * vAlpha * opacity, 1.0);
+      float k = d * vAlpha * opacity;
+      gl_FragColor = vec4(vec3(1.0, 0.86, 0.55) * k, min(1.0, k));
     }`,
 });
 const sparks = new THREE.Points(sparkGeo, sparkMaterial);
@@ -292,8 +308,15 @@ function makeSeagull() {
   gull.add(head);
   const beak = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.075, 10), orange);
   beak.rotation.x = Math.PI / 2;
-  beak.position.set(0, 0.035, 0.24);
+  beak.position.set(0, 0.04, 0.24);
   gull.add(beak);
+  const jaw = new THREE.Group(); // hinged at the base of the beak
+  jaw.position.set(0, 0.03, 0.205);
+  const lower = new THREE.Mesh(new THREE.ConeGeometry(0.01, 0.062, 8), orange);
+  lower.rotation.x = Math.PI / 2;
+  lower.position.z = 0.031;
+  jaw.add(lower);
+  gull.add(jaw);
   for (const s of [-1, 1]) {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.008, 8, 6), dark);
     eye.position.set(0.04 * s, 0.065, 0.195);
@@ -324,16 +347,21 @@ function makeSeagull() {
   const beakTip = new THREE.Object3D();
   beakTip.position.set(0, 0.025, 0.27);
   gull.add(beakTip);
-  gull.userData = { wings, beakTip, materials: [white, grey, dark, orange] };
+  gull.userData = { wings, beakTip, jaw, materials: [white, grey, dark, orange] };
   return gull;
 }
 const gull = makeSeagull();
 gull.scale.setScalar(1.1);
 anchor.add(gull);
 
-function flap(t, strength) {
+const gullVoice = new GullVoice(listener, gull);
+let lastStroke = -1;
+function flap(t, strength, rate = 13) {
+  // One whoosh per downstroke.
+  const stroke = Math.floor((t * rate) / (Math.PI * 2) + 0.25);
+  if (stroke !== lastStroke) { lastStroke = stroke; if (strength > 0.3) gullVoice.flap(strength); }
   for (const w of gull.userData.wings) {
-    const a = Math.sin(t * 13) * 0.75 * strength;
+    const a = Math.sin(t * rate) * 0.75 * strength;
     w.pivot.rotation.z = w.side * a;
     w.outer.rotation.z = w.side * a * 0.6;
   }
@@ -363,7 +391,7 @@ const handMesh = new THREE.InstancedMesh(
 );
 handMesh.frustumCulled = false;
 handMesh.visible = false;
-scene.add(handMesh);
+rig.add(handMesh);
 const fingertips = [];
 const tmpMat = new THREE.Matrix4(), tmpPos = new THREE.Vector3(), tmpQuat = new THREE.Quaternion(), tmpScale = new THREE.Vector3();
 
@@ -383,7 +411,7 @@ function updateHands(frame) {
         tmpPos.set(p.x, p.y, p.z); tmpQuat.set(o.x, o.y, o.z, o.w);
         tmpScale.setScalar(Math.max(0.006, pose.radius || 0.008));
         handMesh.setMatrixAt(n++, tmpMat.compose(tmpPos, tmpQuat, tmpScale));
-        if (name === 'index-finger-tip') fingertips.push(tmpPos.clone());
+        if (name === 'index-finger-tip') fingertips.push(tmpPos.clone().applyMatrix4(rig.matrixWorld));
       }
     }
   }
@@ -431,7 +459,7 @@ const playBall = new THREE.Group();
   iconPivot.add(icon);
   playBall.add(iconPivot);
   const halo = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.42), new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    transparent: true, depthWrite: false, ...GLOW_BLEND,
     uniforms: ringMaterial.uniforms,
     vertexShader: /* glsl */`
       varying vec2 vPos;
@@ -441,7 +469,7 @@ const playBall = new THREE.Group();
       void main() {
         float r = length(vPos);
         float g = smoothstep(1.0, 0.5, r) * smoothstep(0.45, 0.55, r) * (0.55 + 0.25 * sin(time * 2.5));
-        gl_FragColor = vec4(vec3(1.0, 0.75, 0.3) * g, 1.0);
+        gl_FragColor = vec4(vec3(1.0, 0.75, 0.3) * g, g);
       }`,
   }));
   iconPivot.add(halo);
@@ -457,7 +485,7 @@ anchor.add(hint);
 
 function startVideo() {
   if (video.playing || !playBall.visible) return;
-  playBall.userData.pressedAt = performance.now() / 1000;
+  playBall.userData.pressedAt = clock.now;
   hint.visible = false;
   // Centre the 180 on the viewer's head, facing the way the room faces.
   const head = (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
@@ -468,7 +496,8 @@ function startVideo() {
   setTimeout(() => {
     worldRoot.visible = spark.visible = false;
     playBall.visible = false;
-    video.play(pose).catch((err) => {
+    window.dispatchEvent(new Event('scene:video-start'));
+    video.play(pose, rig).catch((err) => {
       console.warn('Video failed:', err);
       if (video.playing) video.stop();
       else video.onEnded();
@@ -477,9 +506,10 @@ function startVideo() {
 }
 video.onEnded = () => {
   worldRoot.visible = spark.visible = true;
-  playBall.visible = true;
+  playBall.visible = sceneApi.autoPlayBall;
   playBall.userData.pressedAt = -1;
-  hint.visible = true;
+  hint.visible = sceneApi.autoPlayBall;
+  window.dispatchEvent(new Event('scene:video-end'));
 };
 
 const fpsLabel = makeLabel(320, 96);
@@ -489,55 +519,83 @@ camera.add(fpsLabel);
 
 // ---------- timeline ----------
 
-const T_BILL = 0.6;        // bill appears at the ceiling
-const T_PORTAL = 1.2;      // portal starts opening
-const T_GULL_OUT = 2.2;    // gull leaves the portal
-const T_GRAB = 4.2;        // gull catches the bill
-const T_GULL_IN = 5.6;     // gull is back through the portal
-const T_GLIDE = 4.5;       // player starts flying through the portal
-const GLIDE_DUR = FLY_DIST / FLY_SPEED;
-const T_HINT = T_GLIDE + GLIDE_DUR + 1.0; // play ball appears
+const T_BILL = 0.6;        // bill appears at the ceiling and flutters to the floor
+const T_PORTAL = 1.2;      // portal opens
+const T_GULL_OUT = 2.6;    // gull flies out of the portal
+const T_HOVER = 5.8;       // gull hovers in front of the viewer and looks at them
+const T_CALLS = [6.5, 8.0]; // gull yells
+const T_SWOOP = 9.4;       // gull dives for the bill on the floor
+const T_GRAB = 10.6;       // gull picks it up
+const T_GULL_IN = 12.4;    // gull is back through the portal
+const T_GLIDE = 11.8;      // player starts flying through the portal
+
+// Flight: constant speed with soft raised-cosine ramps at both ends, so it
+// starts and stops without a jolt.
+const RAMP = 1.2;
+const GLIDE_DUR = FLY_DIST / FLY_SPEED + RAMP;
+const T_ARRIVE = T_GLIDE + GLIDE_DUR;
+const T_HINT = T_ARRIVE + 1.0; // play ball appears
 
 const PORTAL_Z = -PORTAL_DIST, PORTAL_R = 0.55, PORTAL_END_R = 1.3;
+const BILL_FALL = 0.42; // m/s
 
 const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const easeOutBack = (x) => 1 + 2.2 * Math.pow(x - 1, 3) + 1.2 * Math.pow(x - 1, 2);
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 
-const state = { running: false, start: 0, eye: 1.6, inside: false };
+const state = { running: false, start: 0, eye: 1.6, inside: false, arrived: false, calls: 0 };
+const clock = { now: 0, last: 0, frames: 0, fpsT: 0 };
 
+function flightDistance(t) {
+  const v = FLY_SPEED, x = t - T_GLIDE;
+  const ramp = (u) => v * (u / 2 - (RAMP / (2 * Math.PI)) * Math.sin((Math.PI * u) / RAMP));
+  if (x <= 0) return 0;
+  if (x >= GLIDE_DUR) return FLY_DIST;
+  if (x < RAMP) return ramp(x);
+  if (x > GLIDE_DUR - RAMP) return FLY_DIST - ramp(GLIDE_DUR - x);
+  return (v * RAMP) / 2 + v * (x - RAMP);
+}
+
+const BILL_LAND_T = (2.35 - 0.006) / BILL_FALL;
 function billPose(tb, out) {
-  // Fluttering fall: drift side to side while sinking ~0.33 m/s.
+  // Fluttering fall, drifting side to side, then lying flat on the floor.
+  const k = Math.min(tb, BILL_LAND_T);
   out.position.set(
-    0.24 + 0.12 * Math.sin(tb * 2.2),
-    2.35 - 0.33 * tb,
-    -0.8 + 0.06 * Math.sin(tb * 1.7),
+    0.24 + 0.12 * Math.sin(k * 2.2),
+    Math.max(0.006, 2.35 - BILL_FALL * k),
+    -0.8 + 0.06 * Math.sin(k * 1.7),
   );
-  out.rotation.set(0.6 * Math.sin(tb * 2.2 + 1.0), 0.45 * tb, 0.9 * Math.sin(tb * 2.2));
+  const settle = clamp01((tb - BILL_LAND_T + 0.5) / 0.5);
+  out.rotation.set(
+    THREE.MathUtils.lerp(0.6 * Math.sin(k * 2.2 + 1.0), -Math.PI / 2, settle),
+    0.45 * k,
+    THREE.MathUtils.lerp(0.9 * Math.sin(k * 2.2), 0, settle),
+  );
 }
 const scratchBill = new THREE.Object3D();
 function billPositionAt(tb) { billPose(tb, scratchBill); return scratchBill.position.clone(); }
 
-// The portal sits in the doorway, so it travels with the room as the player
-// flies in; it widens as it reaches the player so it passes around the head.
-function portalPoseAt(t) {
-  // Constant speed: no easing, so there is no acceleration to feel.
-  const fly = FLY_DIST * clamp01((t - T_GLIDE) / GLIDE_DUR);
+// The portal stands in the doorway, fixed to the room. It widens as the player
+// reaches it so it passes around the head.
+function portalPoseAt(t, fly) {
   const reach = clamp01(fly / PORTAL_DIST);
   return {
-    fly,
-    z: PORTAL_Z + fly,
-    y: state.eye - 0.08 + 0.08 * reach,
+    z: PORTAL_Z,
+    y: state.eye - 0.08,
     r: THREE.MathUtils.lerp(PORTAL_R, PORTAL_END_R, reach) * easeOutBack(clamp01((t - T_PORTAL) / 1.2)),
   };
 }
 
 const gullOutCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
+const gullDiveCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
 const gullInCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
+const hoverPoint = new THREE.Vector3();
 let grabPoint = new THREE.Vector3();
 
 function startSequence() {
   // Anchor everything to the current head pose, yaw only.
+  rig.position.set(0, 0, 0);
+  rig.updateMatrixWorld(true);
   const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
   cam.updateMatrixWorld(true);
   const headPos = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
@@ -547,26 +605,44 @@ function startSequence() {
   anchor.rotation.set(0, yaw, 0);
   worldRoot.position.copy(anchor.position);
   worldRoot.rotation.set(0, yaw, 0);
-  flyGroup.position.set(0, 0, 0);
   state.eye = THREE.MathUtils.clamp(headPos.y, 1.0, 1.9);
 
-  grabPoint = billPositionAt(T_GRAB - T_BILL);
   const pz = PORTAL_Z, py = state.eye - 0.08;
-  // Keep the gull at least ~0.6 m from the head: out to the left, around the
-  // front of the bill, then in to grab it.
+  hoverPoint.set(-0.18, state.eye - 0.02, -0.72);
+  grabPoint = billPositionAt(T_GRAB - T_BILL).add(new THREE.Vector3(0, 0.03, 0));
+  // Out of the portal, a wide loop to the left and over the top, then in to
+  // hover facing the viewer, never closer than ~0.6 m to the head.
   gullOutCurve.points = [
     new THREE.Vector3(0.05, py, pz - 0.6),
-    new THREE.Vector3(-0.1, py + 0.12, pz + 0.2),
-    new THREE.Vector3(-0.75, py + 0.45, -1.0),
-    new THREE.Vector3(-0.35, grabPoint.y + 0.45, grabPoint.z - 0.45),
-    new THREE.Vector3(grabPoint.x - 0.12, grabPoint.y + 0.12, grabPoint.z - 0.12),
-    grabPoint.clone().add(new THREE.Vector3(0, 0.03, -0.02)),
+    new THREE.Vector3(0.0, py + 0.1, pz + 0.15),
+    new THREE.Vector3(-0.7, py + 0.35, -1.0),
+    new THREE.Vector3(-0.9, py + 0.8, -1.6),
+    new THREE.Vector3(0.1, py + 0.95, -1.9),
+    new THREE.Vector3(0.75, py + 0.6, -1.3),
+    new THREE.Vector3(0.35, py + 0.25, -0.95),
+    hoverPoint.clone(),
+  ];
+  gullDiveCurve.points = [
+    hoverPoint.clone(),
+    new THREE.Vector3(hoverPoint.x - 0.05, hoverPoint.y + 0.15, hoverPoint.z - 0.35),
+    new THREE.Vector3(grabPoint.x - 0.1, grabPoint.y + 0.5, grabPoint.z - 0.35),
+    new THREE.Vector3(grabPoint.x - 0.02, grabPoint.y + 0.1, grabPoint.z - 0.12),
+    grabPoint.clone(),
+  ];
+  gullInCurve.points = [
+    grabPoint.clone(),
+    new THREE.Vector3(grabPoint.x - 0.05, grabPoint.y + 0.35, grabPoint.z - 0.25),
+    new THREE.Vector3(0.05, py + 0.05, pz + 0.3),
+    new THREE.Vector3(0, py, pz - 0.4),
+    new THREE.Vector3(-0.4, py + 0.6, pz - 2.4),
+    new THREE.Vector3(-0.8, py + 1.3, pz - 4.4),
   ];
 
-  state.start = performance.now() / 1000;
+  state.start = clock.now;
   state.running = true;
   state.inside = false;
-  state.lastD = 1;
+  state.arrived = false;
+  state.calls = 0;
   setWorldMasked(true);
   setObjectMasked(false);
   portalMask.visible = true;
@@ -582,16 +658,23 @@ function startSequence() {
   $('replay').hidden = true;
 }
 
-const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), camLocal = new THREE.Vector3();
+const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), camLocal = new THREE.Vector3(), camWorld = new THREE.Vector3();
 
 function update(t, dt) {
   ringMaterial.uniforms.time.value = t;
   if (!state.running) return;
   const T = state.fixedT ?? (t - state.start);
 
-  // Portal opens in the doorway; then the room (portal included) flies to the player.
-  const pp = portalPoseAt(T);
-  flyGroup.position.z = pp.fly;
+  // Flight: move the player rig along the anchor's forward direction.
+  const fly = flightDistance(T);
+  rig.position.set(0, 0, -fly).applyQuaternion(anchor.quaternion);
+  rig.updateMatrixWorld(true);
+  if (!state.arrived && T >= T_ARRIVE) {
+    state.arrived = true;
+    window.dispatchEvent(new Event('scene:arrived'));
+  }
+
+  const pp = portalPoseAt(T, fly);
   portal.position.set(0, pp.y, pp.z);
   portal.scale.setScalar(Math.max(0.0001, pp.r));
   ringMaterial.uniforms.radius.value = Math.max(0.05, pp.r);
@@ -600,10 +683,10 @@ function update(t, dt) {
   // Crossing: once the head is on the far side of the portal plane, show the
   // world everywhere.
   const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
-  camLocal.setFromMatrixPosition(cam.matrixWorld);
+  camWorld.setFromMatrixPosition(cam.matrixWorld);
+  camLocal.copy(camWorld);
   anchor.worldToLocal(camLocal);
-  const d = camLocal.z - pp.z;
-  if (!state.inside && T > T_GLIDE && d < 0) {
+  if (!state.inside && T > T_GLIDE && camLocal.z < pp.z) {
     state.inside = true;
     state.insideAt = T;
     setWorldMasked(false);
@@ -619,62 +702,80 @@ function update(t, dt) {
   fakeRoom.visible = !renderer.xr.isPresenting && !state.inside;
   handMesh.visible = state.inside;
 
-  // Bill: falls until the gull grabs it, then hangs from the beak.
+  // Bill: flutters down and lands on the floor until the gull picks it up.
   if (T >= T_BILL && T < T_GRAB) {
     bill.visible = true;
     billPose(T - T_BILL, bill);
   }
 
-  // Gull: out of the portal, swoop to the bill, back through the portal.
+  // Gull.
+  const jaw = gull.userData.jaw;
+  jaw.rotation.x = 0;
   if (T >= T_GULL_OUT) {
     gull.visible = true;
-    let pos, ahead;
-    if (T < T_GRAB) {
-      const u = easeInOut(clamp01((T - T_GULL_OUT) / (T_GRAB - T_GULL_OUT)));
+    let pos, look = null, ahead = null;
+    if (T < T_HOVER) {
+      // Out of the portal and around in a loop.
+      const u = easeInOut(clamp01((T - T_GULL_OUT) / (T_HOVER - T_GULL_OUT)));
       pos = gullOutCurve.getPointAt(u, v1);
       ahead = gullOutCurve.getPointAt(Math.min(1, u + 0.02), v2);
-      if (u > 0.98) ahead.copy(pos).add(new THREE.Vector3(0.1, 0.05, -0.3));
+      if (u > 0.97) look = camWorld;
       gull.scale.setScalar(1.1 * clamp01((T - T_GULL_OUT) / 0.4 + 0.3));
-      flap(T, u > 0.75 ? 0.35 : 1);
+      flap(T, u > 0.85 ? 0.7 : 1);
+    } else if (T < T_SWOOP) {
+      // Hover, face the viewer, yell.
+      const h = T - T_HOVER;
+      pos = v1.copy(hoverPoint).add(v2.set(0.02 * Math.sin(h * 1.3), 0.03 * Math.sin(h * 2.1), 0.015 * Math.sin(h * 0.9)));
+      look = camWorld;
+      flap(T, 0.85, 17);
+      if (state.calls < T_CALLS.length && T >= T_CALLS[state.calls]) gullVoice.call(state.calls++);
+      for (const tc of T_CALLS) {
+        const c = (T - tc) / 0.6;
+        if (c > 0 && c < 1) jaw.rotation.x = 0.55 * Math.sin(Math.PI * Math.min(1, c * 1.6)) * (0.8 + 0.2 * Math.sin(T * 40));
+      }
+      // Glance down at the bill before diving.
+      if (T > T_SWOOP - 0.8) look = anchor.localToWorld(billPositionAt(T - T_BILL));
+    } else if (T < T_GRAB) {
+      const u = easeInOut(clamp01((T - T_SWOOP) / (T_GRAB - T_SWOOP)));
+      pos = gullDiveCurve.getPointAt(u, v1);
+      ahead = gullDiveCurve.getPointAt(Math.min(1, u + 0.03), v2);
+      if (u > 0.95) ahead.copy(pos).add(new THREE.Vector3(0.05, -0.05, -0.3));
+      flap(T, u > 0.7 ? 1 : 0.4);
     } else {
-      // Rebuild the return path each frame: the portal is already moving.
-      // The far points sit in the room, so they ride along with the flight.
-      const c = new THREE.Vector3(0, pp.y, pp.z);
-      gullInCurve.points = [
-        grabPoint.clone().add(new THREE.Vector3(0, 0.03, -0.02)),
-        new THREE.Vector3(grabPoint.x - 0.05, grabPoint.y + 0.4, grabPoint.z - 0.2),
-        c.clone().add(new THREE.Vector3(0.05, 0.05, 0.25)),
-        c.clone().add(new THREE.Vector3(0, 0, -0.4)),
-        c.clone().add(new THREE.Vector3(-0.4, 0.6, -2.0)),
-        c.clone().add(new THREE.Vector3(-0.8, 1.3, -4.0)),
-      ];
-      const u = clamp01((T - T_GRAB) / ((T_GULL_IN - T_GRAB) * 2.6));
-      const uu = u < 0.5 ? 2 * u * u : u; // speed up on take-off
+      // Take off with the bill and fly back through the portal into the room.
+      const u = clamp01((T - T_GRAB) / ((T_GULL_IN - T_GRAB) * 2.4));
+      const uu = u < 0.5 ? 2 * u * u : u;
       pos = gullInCurve.getPointAt(Math.min(1, uu), v1);
       ahead = gullInCurve.getPointAt(Math.min(1, uu + 0.02), v2);
       if (uu >= 0.99) ahead.copy(pos).add(new THREE.Vector3(-0.2, 0.2, -1));
       flap(T, 1);
       gull.visible = u < 1;
       // Behind the portal plane, only show the gull through the disk.
-      if (!state.inside) setObjectMasked(pos.z < pp.z);
-      else setObjectMasked(false);
+      setObjectMasked(!state.inside && pos.z < pp.z);
+    }
+    gull.position.copy(pos);
+    gull.lookAt(look ? look : anchor.localToWorld(ahead.clone()));
+    if (T >= T_GRAB) {
       bill.visible = gull.visible;
       const tip = gull.userData.beakTip;
       gull.updateMatrixWorld(true);
       bill.position.copy(anchor.worldToLocal(tip.getWorldPosition(new THREE.Vector3()))).add(new THREE.Vector3(0, -0.035, 0));
       bill.quaternion.copy(gull.quaternion).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(1.2, Math.PI / 2, 0.2 * Math.sin(T * 9))));
     }
-    gull.position.copy(pos);
-    gull.lookAt(anchor.localToWorld(ahead.clone()));
   }
 
-  if (T > T_HINT && state.inside && !playBall.visible && !video.playing && playBall.userData.pressedAt < 0) {
-    playBall.visible = hint.visible = true;
-    playBall.userData.shownAt = T;
-    hint.position.set(0, state.eye - 0.38, -0.62);
-    if (!renderer.xr.isPresenting) $('replay').hidden = false;
+  if (sceneApi.autoPlayBall && T > T_HINT && state.inside && !playBall.visible && !video.playing && playBall.userData.pressedAt < 0) {
+    showPlayBall(true);
   }
+  if (!renderer.xr.isPresenting && T > T_HINT) $('replay').hidden = false;
   if (playBall.visible) updatePlayBall(T, t);
+}
+
+function showPlayBall(on = true) {
+  playBall.visible = hint.visible = on;
+  playBall.userData.shownAt = state.fixedT ?? (clock.now - state.start);
+  playBall.userData.pressedAt = -1;
+  hint.position.set(0, state.eye - 0.38, -FLY_DIST - 0.62);
 }
 
 const ballWorld = new THREE.Vector3();
@@ -682,7 +783,7 @@ function updatePlayBall(T, t) {
   const u = playBall.userData;
   const appear = easeOutBack(clamp01((T - u.shownAt) / 0.8));
   const press = u.pressedAt > 0 ? clamp01((t - u.pressedAt) / 0.45) : 0;
-  playBall.position.set(0, state.eye - 0.2 + 0.025 * Math.sin(t * 1.6), -0.62);
+  playBall.position.set(0, state.eye - 0.2 + 0.025 * Math.sin(t * 1.6), -FLY_DIST - 0.62);
   playBall.scale.setScalar(Math.max(0.0001, appear * (1 + press * 0.6)));
   u.ball.rotation.y = t * 0.4;
   const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
@@ -692,19 +793,38 @@ function updatePlayBall(T, t) {
   if (u.pressedAt < 0 && appear > 0.9 && fingertips.some((p) => p.distanceTo(ballWorld) < 0.13)) startVideo();
 }
 
+// Hooks for the Jane avatar and other scene modules.
+// Events on window: 'scene:arrived' (flight into the room finished),
+// 'scene:video-start', 'scene:video-end'.
+const sceneApi = {
+  THREE, scene, renderer, camera, rig, anchor, listener, state,
+  // Set false to let Jane decide when the play ball appears (showPlayBall).
+  autoPlayBall: true,
+  showPlayBall,
+  playVideo: () => { if (!playBall.visible) showPlayBall(true); startVideo(); },
+  // Where the player stands after the flight, in world space: feet position
+  // and horizontal forward direction (toward the coffee table).
+  arrivalPose() {
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(anchor.quaternion);
+    return { position: anchor.localToWorld(new THREE.Vector3(0, 0, -FLY_DIST)), forward };
+  },
+};
+window.sceneApi = sceneApi;
+
 // ---------- startup ----------
 
 let loaded = false;
-const clock = { last: 0, frames: 0, fpsT: 0 };
-
 renderer.setAnimationLoop((time, frame) => {
+  // One clock for everything: the frame's own timestamp (XR display time in
+  // the headset), so motion steps evenly from frame to frame.
   const t = time / 1000;
+  clock.now = t;
   const dt = Math.min(0.1, t - clock.last); clock.last = t;
   if (!renderer.xr.isPresenting && state.running) {
     // Gentle head sway in the flat preview so depth reads.
     camera.position.set(Math.sin(t * 0.5) * 0.04, 1.6, 0);
   }
-  update(performance.now() / 1000, dt);
+  update(t, dt);
   video.update();
   if (renderer.xr.isPresenting) updateHands(frame);
   if (DEBUG) {
@@ -740,6 +860,7 @@ $('enterXr').addEventListener('click', async () => {
     });
     renderer.setClearColor(0x000000, 0);
     video.unlock();
+    listener.context.resume();
     await renderer.xr.setSession(session);
     $('ui').hidden = true;
     // Pinch (select) with either hand replays once the sequence has finished.
@@ -748,7 +869,7 @@ $('enterXr').addEventListener('click', async () => {
       const ref = renderer.xr.getReferenceSpace();
       const pose = e.frame.getPose(e.inputSource.targetRaySpace, ref);
       if (!pose || !playBall.visible) return;
-      const m = new THREE.Matrix4().fromArray(pose.transform.matrix);
+      const m = new THREE.Matrix4().fromArray(pose.transform.matrix).premultiply(rig.matrixWorld);
       const ray = new THREE.Ray(new THREE.Vector3().setFromMatrixPosition(m),
         new THREE.Vector3(0, 0, -1).transformDirection(m));
       playBall.getWorldPosition(ballWorld);
@@ -764,6 +885,7 @@ $('enterXr').addEventListener('click', async () => {
 
 $('preview').addEventListener('click', () => {
   video.unlock();
+  listener.context.resume();
   $('ui').hidden = true;
   camera.position.set(0, 1.6, 0);
   camera.rotation.set(0, 0, 0);
