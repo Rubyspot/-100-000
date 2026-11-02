@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { Video180 } from './video.js';
 import { GullVoice } from './audio.js';
+import { createJane } from './jane/jane.js';
 
 const params = new URLSearchParams(location.search);
 const USE_LOD = params.get('lod') !== '0';
@@ -810,6 +811,7 @@ const sceneApi = {
   },
 };
 window.sceneApi = sceneApi;
+const jane = createJane(sceneApi);
 
 // ---------- startup ----------
 
@@ -826,6 +828,7 @@ renderer.setAnimationLoop((time, frame) => {
   }
   update(t, dt);
   video.update();
+  jane.update(t, dt, frame);
   if (renderer.xr.isPresenting) updateHands(frame);
   if (DEBUG) {
     clock.frames++;
@@ -853,6 +856,7 @@ async function checkXr() {
 }
 
 $('enterXr').addEventListener('click', async () => {
+  jane.prepareMic(); // ask for the mic now, not inside the headset
   try {
     const session = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['local-floor'],
@@ -884,6 +888,7 @@ $('enterXr').addEventListener('click', async () => {
 });
 
 $('preview').addEventListener('click', () => {
+  jane.prepareMic();
   video.unlock();
   listener.context.resume();
   $('ui').hidden = true;

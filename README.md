@@ -46,3 +46,11 @@ Other options: `?speed=0.4` sets the flight speed in m/s (constant).
 `anchor`, `listener`, `showPlayBall(on)`, `playVideo()`, `arrivalPose()`, and
 `autoPlayBall` (set false to control when the play ball shows). Window events:
 `scene:arrived`, `scene:video-start`, `scene:video-end`.
+
+## Jane
+
+Jane (placeholder figure until her MetaHuman) welcomes the player on arrival,
+offers the video, chats after it and sends them to `/jetski/`. Live
+conversation needs an ElevenLabs agent id (`?agent=<id>` or `jane/config.js`);
+without one she runs scripted lines with the browser voice. `?jane=off` hides
+her. Details and setup: [jane/README.md](jane/README.md).
