@@ -54,3 +54,18 @@ offers the video, chats after it and sends them to `/jetski/`. Live
 conversation needs an ElevenLabs agent id (`?agent=<id>` or `jane/config.js`);
 without one she runs scripted lines with the browser voice. `?jane=off` hides
 her. Details and setup: [jane/README.md](jane/README.md).
+
+## Jane splat test (`/jane-splat/`)
+
+Performance test for a splat Jane: her 315k-splat scan standing in the room
+scan, with a live readout in the headset (fps against the headset's rate,
+frame time and worst frame, slow frames, splats drawn, decode time and the
+hitch when a pose swaps). Poses swap every 5 s over the scripted host lines in
+the browser voice, like an old adventure game. Only one pose scan exists, so
+the extra poses are the same scan turned a few degrees.
+
+- **Enter VR** puts you in the room scan; **Enter MR** shows Jane alone in passthrough.
+- Left pinch hides or shows the room, right pinch jumps to the next pose.
+- `?q=315k|315k-sh0|150k|75k` picks the Jane file (`assets/jane/`), `?mode=preload|stream`
+  (all poses decoded up front, or each decoded at swap time), `?poses=1..6`, `?every=5`,
+  `?fade=0.3` (cross-fade), `?urls=a.sog,b.sog` (real pose files), `?height=1.65`, `?hz=90`, `?vo=0`.
