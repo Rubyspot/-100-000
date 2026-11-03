@@ -5,7 +5,8 @@
 // the same scan turned a little; drop real pose files in with ?urls=.
 //
 // URL options (all optional):
-//   ?q=315k | 315k-sh0 | 150k | 75k   Jane file (default 315k, the original upload)
+//   ?q=315k | 315k-sh0 | 200k | 150k | 75k   Jane file (default 200k; 315k is the original upload)
+//   ?roomq=400k | 900k                room scan file (default 400k)
 //   ?mode=preload | stream            preload: every pose decoded up front, a swap is a visibility flip
 //                                     stream: each swap decodes the next file, then flips
 //   ?poses=3                          how many poses to cycle (preload keeps them all in memory)
@@ -26,10 +27,11 @@ const params = new URLSearchParams(location.search);
 const QUALITIES = {
   '315k': { url: '../assets/jane/jane-315k.sog', count: 315490, note: 'original, SH3' },
   '315k-sh0': { url: '../assets/jane/jane-315k-sh0.sog', count: 315490, note: 'no SH' },
+  '200k': { url: '../assets/jane/jane-200k.sog', count: 200000, note: 'no SH' },
   '150k': { url: '../assets/jane/jane-150k.sog', count: 150000, note: 'no SH' },
   '75k': { url: '../assets/jane/jane-75k.sog', count: 75000, note: 'no SH' },
 };
-const Q = QUALITIES[params.get('q')] ? params.get('q') : '315k';
+const Q = QUALITIES[params.get('q')] ? params.get('q') : '200k';
 const MODE = params.get('mode') === 'stream' ? 'stream' : 'preload';
 const EVERY = Math.max(1, Number(params.get('every')) || 5);
 const FADE = Math.max(0, Number(params.get('fade')) || 0);
@@ -37,7 +39,14 @@ const VO = params.get('vo') !== '0';
 const HZ = Number(params.get('hz')) || 0;
 const FACE = (Number(params.get('face')) || 0) * Math.PI / 180;
 const USE_LOD = params.get('lod') !== '0';
-const ROOM_COUNT = 900000; // assets/room.sog, decimated from the 4.4M scan
+// Room scan: ?roomq=400k (default) or 900k (the opening scene's file). Both
+// are decimated from the 4.4M scan.
+const ROOMS = {
+  '400k': { url: '../assets/room-400k.sog', count: 400000 },
+  '900k': { url: '../assets/room.sog', count: 900000 },
+};
+const ROOMQ = ROOMS[params.get('roomq')] ? params.get('roomq') : '400k';
+const ROOM_COUNT = ROOMS[ROOMQ].count;
 // Performance knobs. Spark's LoD keeps LoD meshes under a splat budget,
 // 500k by default on Quest; ?budget=250 sets it in thousands. ?janelod=1 puts
 // Jane under the same budget. ?fb=0.7 renders the headset at 70% resolution
@@ -68,8 +77,8 @@ const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
 
 // Option chips on the start card are plain links that reload with new params.
-const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '3', '6'], budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'] };
-const CURRENT = { q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0' };
+const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '3', '6'], roomq: Object.keys(ROOMS), budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'] };
+const CURRENT = { roomq: ROOMQ, q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0' };
 for (const box of document.querySelectorAll('.opts')) {
   const key = box.dataset.param;
   for (const v of CHIPS[key]) {
@@ -128,7 +137,7 @@ const roomRoot = new THREE.Group();
 }
 scene.add(roomRoot);
 const room = new SplatMesh({
-  url: params.get('scan') || '../assets/room.sog',
+  url: params.get('scan') || ROOMS[ROOMQ].url,
   lod: USE_LOD ? true : undefined,
 });
 room.rotation.x = Math.PI;
@@ -300,7 +309,7 @@ function perfLines() {
   return [
     `${perf.fps} fps${hz}   frame ${perf.avgMs.toFixed(1)} ms   worst ${perf.worstMs.toFixed(1)} ms`,
     `slow frames ${perf.slowRate}/s (total ${perf.slowTotal})   js ${perf.cpuMs.toFixed(1)} ms${mem ? `   heap ${mem} MB` : ''}`,
-    `~${fmt(drawn)} splats drawn   room ${roomRoot.visible ? 'on' : 'off'}   Jane ${Q}${JANE_LOD ? ' (LoD)' : ''}`,
+    `~${fmt(drawn)} splats drawn   room ${roomRoot.visible ? ROOMQ : 'off'}   Jane ${Q}${JANE_LOD ? ' (LoD)' : ''}`,
     `budget ${fmt(BUDGET)}   resolution ${FB}${STDDEV ? `   stddev ${STDDEV}` : ''}`,
     `${MODE}: pose ${poseState.index + 1}/${POSES.length} ${pose?.name || ''}   in memory ${fmt(janeSplats)}`,
     `last ${MODE === 'stream' ? 'decode' : 'load'} ${Math.round(poseState.lastLoadMs)} ms   swap hitch ${poseState.lastHitchMs.toFixed(1)} ms`,

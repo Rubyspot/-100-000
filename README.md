@@ -66,7 +66,8 @@ the extra poses are the same scan turned a few degrees.
 
 - **Enter VR** puts you in the room scan; **Enter MR** shows Jane alone in passthrough.
 - Left pinch hides or shows the room, right pinch jumps to the next pose.
-- `?q=315k|315k-sh0|150k|75k` picks the Jane file (`assets/jane/`), `?mode=preload|stream`
+- Defaults: room 400k (`assets/room-400k.sog`, `?roomq=900k` for the opening's file), Jane 200k.
+- `?q=315k|315k-sh0|200k|150k|75k` picks the Jane file (`assets/jane/`), `?mode=preload|stream`
   (all poses decoded up front, or each decoded at swap time), `?poses=1..6`, `?every=5`,
   `?fade=0.3` (cross-fade), `?urls=a.sog,b.sog` (real pose files), `?height=1.65`, `?hz=90`, `?vo=0`.
 - Performance knobs: `?budget=250` (Spark LoD splat budget in thousands; Spark uses 500 on Quest),
