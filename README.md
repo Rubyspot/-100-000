@@ -69,3 +69,5 @@ the extra poses are the same scan turned a few degrees.
 - `?q=315k|315k-sh0|150k|75k` picks the Jane file (`assets/jane/`), `?mode=preload|stream`
   (all poses decoded up front, or each decoded at swap time), `?poses=1..6`, `?every=5`,
   `?fade=0.3` (cross-fade), `?urls=a.sog,b.sog` (real pose files), `?height=1.65`, `?hz=90`, `?vo=0`.
+- Performance knobs: `?budget=250` (Spark LoD splat budget in thousands; Spark uses 500 on Quest),
+  `?janelod=1` (Jane shares that budget), `?fb=0.7` (render resolution scale), `?stddev=2` (smaller splat footprint).

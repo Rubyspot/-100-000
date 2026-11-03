@@ -38,6 +38,15 @@ const HZ = Number(params.get('hz')) || 0;
 const FACE = (Number(params.get('face')) || 0) * Math.PI / 180;
 const USE_LOD = params.get('lod') !== '0';
 const ROOM_COUNT = 900000; // assets/room.sog, decimated from the 4.4M scan
+// Performance knobs. Spark's LoD keeps LoD meshes under a splat budget,
+// 500k by default on Quest; ?budget=250 sets it in thousands. ?janelod=1 puts
+// Jane under the same budget. ?fb=0.7 renders the headset at 70% resolution
+// (fewer pixels to fill). ?stddev=2 trims each splat's footprint (default 2.83).
+const IS_QUEST = /OculusBrowser|Quest/i.test(navigator.userAgent);
+const BUDGET = Number(params.get('budget')) ? Number(params.get('budget')) * 1000 : (IS_QUEST ? 500000 : 2500000);
+const JANE_LOD = params.get('janelod') === '1';
+const FB = Math.min(1.5, Math.max(0.3, Number(params.get('fb')) || 1));
+const STDDEV = Number(params.get('stddev')) || 0;
 
 // Placeholder poses: the same scan turned by a different angle each, so the
 // swap is visible. Real poses replace these one for one.
@@ -59,8 +68,8 @@ const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
 
 // Option chips on the start card are plain links that reload with new params.
-const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '3', '6'] };
-const CURRENT = { q: Q, mode: MODE, poses: String(N_POSES) };
+const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '3', '6'], budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'] };
+const CURRENT = { q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0' };
 for (const box of document.querySelectorAll('.opts')) {
   const key = box.dataset.param;
   for (const v of CHIPS[key]) {
@@ -81,6 +90,7 @@ renderer.setClearColor(0x000000, 1);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
 renderer.xr.setFoveation(1);
+renderer.xr.setFramebufferScaleFactor(FB);
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -93,7 +103,9 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-const spark = new SparkRenderer({ renderer });
+const spark = new SparkRenderer({ renderer, lodSplatCount: BUDGET, ...(STDDEV ? { maxStdDev: STDDEV } : {}) });
+spark.lodSplatCount = BUDGET;
+if (STDDEV) spark.maxStdDev = STDDEV;
 scene.add(spark);
 
 // ---------- room scan ----------
@@ -138,7 +150,7 @@ scene.add(janeRoot);
 function makePose(pose) {
   const pivot = new THREE.Group();
   pivot.rotation.y = (pose.yaw * Math.PI) / 180;
-  const mesh = new SplatMesh({ url: pose.url });
+  const mesh = new SplatMesh({ url: pose.url, lod: JANE_LOD ? true : undefined });
   // Flip upright, scale, and put her feet on the floor at the pivot.
   mesh.rotation.x = Math.PI;
   mesh.scale.setScalar(JANE_SCALE);
@@ -278,21 +290,25 @@ function perfLines() {
   const janeSplats = MODE === 'preload'
     ? POSES.reduce((s, p) => s + p.count, 0)
     : pose?.count || 0;
-  const drawn = (poseState.shown ? pose.count : 0) + (roomRoot.visible ? ROOM_COUNT : 0);
+  // LoD meshes share the budget; the rest draw every splat.
+  const lodWant = (roomRoot.visible && USE_LOD ? ROOM_COUNT : 0) + (poseState.shown && JANE_LOD ? pose.count : 0);
+  const drawn = Math.min(lodWant, BUDGET) + (roomRoot.visible && !USE_LOD ? ROOM_COUNT : 0)
+    + (poseState.shown && !JANE_LOD ? pose.count : 0);
   const hz = perf.targetHz ? ` / ${perf.targetHz} Hz` : '';
   const mem = memoryMb();
   const fmt = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : `${Math.round(n / 1000)}k`);
   return [
     `${perf.fps} fps${hz}   frame ${perf.avgMs.toFixed(1)} ms   worst ${perf.worstMs.toFixed(1)} ms`,
     `slow frames ${perf.slowRate}/s (total ${perf.slowTotal})   js ${perf.cpuMs.toFixed(1)} ms${mem ? `   heap ${mem} MB` : ''}`,
-    `drawn ${fmt(drawn)} splats   room ${roomRoot.visible ? 'on' : 'off'}   Jane ${Q} (${QUALITIES[Q].note})`,
+    `~${fmt(drawn)} splats drawn   room ${roomRoot.visible ? 'on' : 'off'}   Jane ${Q}${JANE_LOD ? ' (LoD)' : ''}`,
+    `budget ${fmt(BUDGET)}   resolution ${FB}${STDDEV ? `   stddev ${STDDEV}` : ''}`,
     `${MODE}: pose ${poseState.index + 1}/${POSES.length} ${pose?.name || ''}   in memory ${fmt(janeSplats)}`,
     `last ${MODE === 'stream' ? 'decode' : 'load'} ${Math.round(poseState.lastLoadMs)} ms   swap hitch ${poseState.lastHitchMs.toFixed(1)} ms`,
   ];
 }
 
 // In-headset panel, slightly below the view and tilted up.
-const HUD_W = 900, HUD_H = 330;
+const HUD_W = 900, HUD_H = 372;
 const hudCanvas = document.createElement('canvas');
 hudCanvas.width = HUD_W; hudCanvas.height = HUD_H;
 const hudTex = new THREE.CanvasTexture(hudCanvas);
@@ -323,7 +339,7 @@ function drawHud() {
     g.fillStyle = '#f2c45a';
     g.font = 'italic 24px system-ui, sans-serif';
     const t = vo.text.length > 70 ? `${vo.text.slice(0, 68)}…` : vo.text;
-    g.fillText(`Jane: ${t}`, 24, 72 + 4 * 42 + 8);
+    g.fillText(`Jane: ${t}`, 24, 72 + 5 * 42 + 8);
   }
   hudTex.needsUpdate = true;
   hudDom.textContent = lines.join('\n') + (vo.text ? `\nJane: ${vo.text}` : '');
