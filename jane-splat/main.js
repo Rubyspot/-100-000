@@ -1,15 +1,15 @@
 // Jane splat test: Jane's Gaussian splat standing in the room scan, a live
 // performance readout (in the headset and on screen), and a "slideshow" of
 // splat poses swapped every few seconds over a voiceover, like old PC
-// adventure games. Only one pose scan exists so far, so the extra poses are
-// the same scan turned a little; drop real pose files in with ?urls=.
+// adventure games. Two real pose scans exist (pose 1 and Ilia's 111.sog as
+// pose 2); ?poses=3+ adds turned copies of pose 1; drop more files in with ?urls=.
 //
 // URL options (all optional):
 //   ?q=315k | 315k-sh0 | 200k | 150k | 75k   Jane file (default 200k; 315k is the original upload)
 //   ?roomq=400k | 900k                room scan file (default 400k)
 //   ?mode=preload | stream            preload: every pose decoded up front, a swap is a visibility flip
 //                                     stream: each swap decodes the next file, then flips
-//   ?poses=3                          how many poses to cycle (preload keeps them all in memory)
+//   ?poses=2                          how many poses to cycle (preload keeps them all in memory)
 //   ?urls=a.sog,b.sog                 real pose files instead of the placeholder copies
 //   ?every=5                          seconds per pose
 //   ?fade=0                           cross-fade seconds (0 = hard cut)
@@ -17,7 +17,10 @@
 //   ?vo=0                             no voiceover
 //   ?hz=90                            ask Quest for 90 Hz (default: the headset's own rate, 72)
 //   ?face=0                           extra yaw in degrees if Jane faces the wrong way
-//   ?height=1.65                      Jane's height in metres; ?dist=1.3 how far in front of you she stands
+//   ?height=1.65                      Jane's height in metres
+//   ?spot=-0.3,-2.25                  where Jane stands, in room-scan x,z (default: clear floor right of
+//                                     the table, about 0.8 m from you); she turns to face you
+//   ?dist=1.3                         old placement: straight ahead at this distance (ends up in the table)
 //   ?lod=0                            no Spark LoD on the room
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
@@ -59,6 +62,16 @@ const STDDEV = Number(params.get('stddev')) || 0;
 
 // Placeholder poses: the same scan turned by a different angle each, so the
 // swap is visible. Real poses replace these one for one.
+// Each real scan has its own size and origin, measured with splat-transform
+// (robust 0.1/99.9% percentiles of opaque splats, scaled so both read as the
+// same person). yaw turns a scan that faces -Z to face +Z like pose 1.
+const SCAN1 = { height: 3.675, feetY: 0.099, cx: -0.075, cz: -0.69 };
+const SCAN2 = { height: 1.70, feetY: 0.06, cx: -0.063, cz: -0.2, yaw: 0 };
+const POSE2_FILE = { '315k': '518k', '315k-sh0': '518k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
+const REAL = [
+  { name: 'pose 1', yaw: 0, scan: SCAN1, url: null },
+  { name: 'pose 2 (111)', yaw: 0, scan: SCAN2, url: `../assets/jane/pose2-${POSE2_FILE[Q]}.sog` },
+];
 const PLACEHOLDER = [
   { name: 'wave', yaw: 0 },
   { name: 'meditate', yaw: 28 },
@@ -68,16 +81,18 @@ const PLACEHOLDER = [
   { name: 'laugh', yaw: 14 },
 ];
 const URLS = (params.get('urls') || '').split(',').map((s) => s.trim()).filter(Boolean);
-const N_POSES = URLS.length || Math.min(PLACEHOLDER.length, Math.max(1, Number(params.get('poses')) || 3));
-const POSES = Array.from({ length: N_POSES }, (_, i) => URLS.length
-  ? { name: URLS[i].split('/').pop().replace(/\.\w+$/, ''), yaw: 0, url: URLS[i], count: 0 }
-  : { ...PLACEHOLDER[i], url: QUALITIES[Q].url, count: QUALITIES[Q].count });
+const N_POSES = URLS.length || Math.min(REAL.length + PLACEHOLDER.length - 1, Math.max(1, Number(params.get('poses')) || 2));
+const POSES = Array.from({ length: N_POSES }, (_, i) => {
+  if (URLS.length) return { name: URLS[i].split('/').pop().replace(/\.\w+$/, ''), yaw: 0, scan: SCAN1, url: URLS[i], count: 0 };
+  if (i < REAL.length) return { ...REAL[i], url: REAL[i].url || QUALITIES[Q].url, count: i === 0 ? QUALITIES[Q].count : 0 };
+  return { ...PLACEHOLDER[i - REAL.length + 1], scan: SCAN1, url: QUALITIES[Q].url, count: QUALITIES[Q].count };
+});
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
 
 // Option chips on the start card are plain links that reload with new params.
-const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '3', '6'], roomq: Object.keys(ROOMS), budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'] };
+const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '2', '4', '7'], roomq: Object.keys(ROOMS), budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'] };
 const CURRENT = { roomq: ROOMQ, q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0' };
 for (const box of document.querySelectorAll('.opts')) {
   const key = box.dataset.param;
@@ -148,22 +163,32 @@ roomRoot.visible = params.get('room') !== '0';
 // Her scan is y down, 3.67 units from feet to head, so it is scaled to
 // ?height (default 1.65 m). She stands 1.3 m in front of the player and her
 // scan already faces +Z, toward them.
-const JANE_SCAN = { height: 3.675, feetY: 0.099, cx: -0.075, cz: -0.69 }; // splat-transform --stats
 const JANE_HEIGHT = Number(params.get('height')) || 1.65;
-const JANE_SCALE = JANE_HEIGHT / JANE_SCAN.height;
 const janeRoot = new THREE.Group();
-janeRoot.position.set(0, 0, -Number(params.get('dist') || 1.3));
-janeRoot.rotation.y = FACE;
+if (params.get('dist')) {
+  janeRoot.position.set(0, 0, -Number(params.get('dist')));
+  janeRoot.rotation.y = FACE;
+} else {
+  // Stand her on clear floor in the room (scan x,z; the table is at -0.47,-3.0
+  // and the player at 0.44,-1.93) and turn her toward the player.
+  const [sx, sz] = (params.get('spot') || '-0.3,-2.25').split(',').map(Number);
+  roomRoot.updateMatrixWorld(true);
+  janeRoot.position.set(sx, 0, -sz).applyMatrix4(roomRoot.matrixWorld);
+  janeRoot.position.y = 0;
+  janeRoot.rotation.y = Math.atan2(-janeRoot.position.x, -janeRoot.position.z) + FACE;
+}
 scene.add(janeRoot);
 
 function makePose(pose) {
   const pivot = new THREE.Group();
-  pivot.rotation.y = (pose.yaw * Math.PI) / 180;
+  const scan = pose.scan;
+  const k = JANE_HEIGHT / scan.height;
+  pivot.rotation.y = ((pose.yaw + (scan.yaw || 0)) * Math.PI) / 180;
   const mesh = new SplatMesh({ url: pose.url, lod: JANE_LOD ? true : undefined });
   // Flip upright, scale, and put her feet on the floor at the pivot.
   mesh.rotation.x = Math.PI;
-  mesh.scale.setScalar(JANE_SCALE);
-  mesh.position.set(-JANE_SCAN.cx * JANE_SCALE, JANE_SCAN.feetY * JANE_SCALE, JANE_SCAN.cz * JANE_SCALE);
+  mesh.scale.setScalar(k);
+  mesh.position.set(-scan.cx * k, scan.feetY * k, scan.cz * k);
   pivot.add(mesh);
   pivot.visible = false;
   pivot.userData.mesh = mesh;
