@@ -73,13 +73,14 @@ const SCAN1 = { height: 3.675, feetY: 0.099, cx: -0.075, cz: -0.69 };
 // Their files are re-encoded as SOG v2 because Spark 2.4 doesn't read SOG v3.
 const SCAN111 = { height: 1.70, feetY: 0.06, cx: -0.063, cz: -0.2, yaw: 0, aa: true };
 const SCAN_NEW = { height: 1.634, feetY: -0.07, cx: -0.092, cz: -0.147, yaw: 0, aa: true };
-const POSE2_FILE = { '315k': '518k-sh0', '315k-sh0': '518k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
+const POSE2_FILE = { '315k': '518k.spz', '315k-sh0': '518k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
+// Full SH3 versions are SPZ (encoding SOG v2 with SH takes too long on CPU).
 // NEW.sog cut-downs use adaptive decimation (keeps detail where it shows).
-const NEW_FILE = { '315k': '517k-sh0', '315k-sh0': '517k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
+const NEW_FILE = { '315k': '517k.spz', '315k-sh0': '517k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
 const REAL = [
   { name: 'pose 1', yaw: 0, scan: SCAN1, url: null },
-  { name: 'pose 2 (NEW)', yaw: 0, scan: SCAN_NEW, url: `../assets/jane/new-${NEW_FILE[Q]}.sog` },
-  { name: 'pose 3 (111)', yaw: 0, scan: SCAN111, url: `../assets/jane/pose2-${POSE2_FILE[Q]}.sog` },
+  { name: 'pose 2 (NEW)', yaw: 0, scan: SCAN_NEW, url: `../assets/jane/new-${NEW_FILE[Q]}`.replace(/(k|sh0)$/, '$1.sog') },
+  { name: 'pose 3 (111)', yaw: 0, scan: SCAN111, url: `../assets/jane/pose2-${POSE2_FILE[Q]}`.replace(/(k|sh0)$/, '$1.sog') },
 ];
 const PLACEHOLDER = [
   { name: 'wave', yaw: 0 },
