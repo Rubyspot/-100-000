@@ -67,11 +67,15 @@ const STDDEV = Number(params.get('stddev')) || 0;
 // (robust 0.1/99.9% percentiles of opaque splats, scaled so both read as the
 // same person). yaw turns a scan that faces -Z to face +Z like pose 1.
 const SCAN1 = { height: 3.675, feetY: 0.099, cx: -0.075, cz: -0.69 };
-const SCAN111 = { height: 1.70, feetY: 0.06, cx: -0.063, cz: -0.2, yaw: 0 };
-const SCAN_NEW = { height: 1.634, feetY: -0.07, cx: -0.092, cz: -0.147, yaw: 0 };
-const POSE2_FILE = { '315k': '518k', '315k-sh0': '518k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
+// 111 and NEW were trained with Postshot's anti-aliasing ("antialiased" splat
+// model): they need a 0.1 px² screen filter instead of the 0.3 px² used for
+// classic scans like pose 1, or their many tiny splats fade out and look grainy.
+// Their files are re-encoded as SOG v2 because Spark 2.4 doesn't read SOG v3.
+const SCAN111 = { height: 1.70, feetY: 0.06, cx: -0.063, cz: -0.2, yaw: 0, aa: true };
+const SCAN_NEW = { height: 1.634, feetY: -0.07, cx: -0.092, cz: -0.147, yaw: 0, aa: true };
+const POSE2_FILE = { '315k': '518k-sh0', '315k-sh0': '518k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
 // NEW.sog cut-downs use adaptive decimation (keeps detail where it shows).
-const NEW_FILE = { '315k': '517k', '315k-sh0': '517k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
+const NEW_FILE = { '315k': '517k-sh0', '315k-sh0': '517k-sh0', '200k': '200k', '150k': '150k', '75k': '75k' };
 const REAL = [
   { name: 'pose 1', yaw: 0, scan: SCAN1, url: null },
   { name: 'pose 2 (NEW)', yaw: 0, scan: SCAN_NEW, url: `../assets/jane/new-${NEW_FILE[Q]}.sog` },
@@ -197,6 +201,7 @@ function makePose(pose) {
   pivot.add(mesh);
   pivot.visible = false;
   pivot.userData.mesh = mesh;
+  pivot.userData.aa = !!scan.aa;
   return pivot;
 }
 
@@ -228,9 +233,19 @@ async function loadPoses() {
   show(poseState.loaded[0], 0);
 }
 
+// Spark's blurAmount is the anti-aliasing filter (with opacity compensation),
+// shared by everything it draws, so it follows whichever Jane is showing.
+// ?aa=0.1 / ?classic=0.3 override the two values for testing.
+const AA_BLUR = Number(params.get('aa') ?? 0.1);
+const CLASSIC_BLUR = Number(params.get('classic') ?? 0.3);
+function setFilter(aa) {
+  spark.blurAmount = aa ? AA_BLUR : CLASSIC_BLUR;
+}
+
 function show(pivot, index) {
   const old = poseState.shown;
   pivot.visible = true;
+  setFilter(pivot.userData.aa);
   poseState.shown = pivot;
   poseState.index = index;
   poseState.swapAt = clock.now;
