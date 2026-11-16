@@ -7,7 +7,8 @@
 //
 // URL options (all optional):
 //   ?q=315k | 315k-sh0 | 200k | 150k | 75k   Jane file (default 150k; 315k is the original upload)
-//   ?roomq=200k | 300k | 400k | 900k  room scan file (default 300k)
+//   ?roomq=200k | 300k | 400k | 900k  room scan file (default 400k)
+//   ?floor=0.07                       raise the room scan this many metres (default 0.07: its floor sat 7 cm low)
 //   ?mode=preload | stream            preload: every pose decoded up front, a swap is a visibility flip
 //                                     stream: each swap decodes the next file, then flips
 //   ?poses=3                          how many poses to cycle (preload keeps them all in memory)
@@ -19,8 +20,8 @@
 //   ?hz=90                            ask Quest for 90 Hz (default: the headset's own rate, 72)
 //   ?face=0                           extra yaw in degrees if Jane faces the wrong way
 //   ?height=1.75                      Jane's height in metres (default 1.75)
-//   ?spot=-0.3,-2.25                  where Jane stands, in room-scan x,z (default: clear floor right of
-//                                     the table, about 0.8 m from you); she turns to face you
+//   ?spot=-0.68,-1.93                 where Jane stands, in room-scan x,z (default: clear floor right of
+//                                     the table, about 1.1 m from you); she turns to face you
 //   ?dist=1.3                         old placement: straight ahead at this distance (ends up in the table)
 //   ?lod=0                            no Spark LoD on the room
 //   ?set=surf                         only the surfboard Jane (surf.sog, 900k, anti-aliased) in the room;
@@ -48,8 +49,8 @@ const POSE_QUALITIES = {
   '75k': { url: '../assets/jane/jane-75k.sog', count: 75000, note: 'no SH' },
 };
 const QUALITIES = SET === 'surf' ? SURF_QUALITIES : POSE_QUALITIES;
-// Defaults are Ilia's Quest picks (Nov 16): Jane 150k, room 300k, budget 500k,
-// resolution 0.8, fast preset with room LoD 1, foveation 1.
+// Defaults are Ilia's Quest picks (Nov 16): Jane 150k, room 400k (was 300k),
+// budget 500k, resolution 0.8, fast preset with room LoD 1, foveation 1.
 const Q = QUALITIES[params.get('q')] ? params.get('q') : '150k';
 const MODE = params.get('mode') === 'stream' ? 'stream' : 'preload';
 const EVERY = Math.max(1, Number(params.get('every')) || 5);
@@ -58,15 +59,17 @@ const VO = params.get('vo') !== '0';
 const HZ = Number(params.get('hz')) || 0;
 const FACE = (Number(params.get('face')) || 0) * Math.PI / 180;
 const USE_LOD = params.get('lod') !== '0';
-// Room scan: ?roomq=400k (default) or 900k (the opening scene's file). Both
-// are decimated from the 4.4M scan.
+// Room scan: ?roomq=400k (default) down to 200k, or 900k. All are decimated
+// from the 4.4M scan.
 const ROOMS = {
   '200k': { url: '../assets/room-200k.sog', count: 200000 },
   '300k': { url: '../assets/room-300k.sog', count: 300000 },
   '400k': { url: '../assets/room-400k.sog', count: 400000 },
   '900k': { url: '../assets/room.sog', count: 900000 },
 };
-const ROOMQ = ROOMS[params.get('roomq')] ? params.get('roomq') : '300k';
+const ROOMQ = ROOMS[params.get('roomq')] ? params.get('roomq') : '400k';
+// The scan's floor sat about 7 cm below the real one (Ilia, Nov 16): lift it.
+const FLOOR = Number(params.get('floor') ?? 0.07);
 const ROOM_COUNT = ROOMS[ROOMQ].count;
 // Performance knobs. Spark's LoD keeps LoD meshes under a splat budget,
 // 500k by default on Quest; ?budget=250 sets it in thousands. ?janelod=1 puts
@@ -226,6 +229,7 @@ const room = new SplatMesh({
   lod: USE_LOD ? true : undefined,
 });
 room.rotation.x = Math.PI;
+room.position.y = FLOOR;
 roomRoot.add(room);
 roomRoot.visible = params.get('room') !== '0';
 
@@ -241,8 +245,10 @@ if (params.get('dist')) {
   janeRoot.rotation.y = FACE;
 } else {
   // Stand her on clear floor in the room (scan x,z; the table is at -0.47,-3.0
-  // and the player at 0.44,-1.93) and turn her toward the player.
-  const [sx, sz] = (params.get('spot') || '-0.3,-2.25').split(',').map(Number);
+  // and the player at 0.44,-1.93) and turn her toward the player. The default
+  // is 0.5 m to the player's right of the first spot (-0.3,-2.25), away from
+  // the table (Ilia, Nov 16).
+  const [sx, sz] = (params.get('spot') || '-0.68,-1.93').split(',').map(Number);
   roomRoot.updateMatrixWorld(true);
   janeRoot.position.set(sx, 0, -sz).applyMatrix4(roomRoot.matrixWorld);
   janeRoot.position.y = 0;

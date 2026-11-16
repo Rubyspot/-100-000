@@ -21,6 +21,9 @@ export function createJane(api) {
   const avatar = createAvatar();
   const root = new THREE.Group();
   root.add(avatar.object);
+  // With her Gaussian splat in the scene (api.janeSpot), the stand-in figure
+  // stays hidden and only the caption shows, above the splat's head.
+  if (api.janeSpot) avatar.object.visible = false;
   root.visible = false;
   scene.add(root);
 
@@ -48,7 +51,8 @@ export function createJane(api) {
     const fwd = pose ? pose.forward.clone() : new THREE.Vector3(0, 0, -1).applyQuaternion(cameraObj().quaternion);
     fwd.y = 0; fwd.normalize();
     const left = new THREE.Vector3(fwd.z, 0, -fwd.x);
-    root.position.copy(pos).addScaledVector(fwd, STAND_DISTANCE).addScaledVector(left, STAND_OFFSET);
+    if (api.janeSpot) root.position.copy(api.janeSpot());
+    else root.position.copy(pos).addScaledVector(fwd, STAND_DISTANCE).addScaledVector(left, STAND_OFFSET);
     root.position.y = 0;
     root.lookAt(head.x, 0, head.z);
     // Jetski orb floats to the player's right, at chest height.
