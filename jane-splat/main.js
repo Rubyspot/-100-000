@@ -68,11 +68,37 @@ const ROOM_COUNT = ROOMS[ROOMQ].count;
 // 500k by default on Quest; ?budget=250 sets it in thousands. ?janelod=1 puts
 // Jane under the same budget. ?fb=0.7 renders the headset at 70% resolution
 // (fewer pixels to fill). ?stddev=2 trims each splat's footprint (default 2.83).
+// More Spark knobs (defaults in brackets), all optional:
+//   ?lodpx=2     LoD picks splats at least this many pixels wide [1]; Spark says up to 5 often looks the same
+//   ?sortms=33   minimum ms between depth sorts [0 = every frame]
+//   ?clip=1.2    cull splats whose centre is this far outside the view (1 = exactly at the edge) [1.4]
+//   ?minpx=0.5   skip splats smaller than this many pixels [0]; ?maxpx=256 cap a splat's pixel radius [512]
+//   ?minalpha=2  skip fragments fainter than this /255 [0.5]
+//   ?cone=0.3 ?behind=0.1   LoD detail at the edge of view / behind you [0.4 / 0.2]
+//   ?ffr=1       Quest fixed foveated rendering, 0 (off) to 1 (strongest) [1]
+//   ?preset=fast sets budget 300, stddev 2.4, lodpx 2, sortms 33, clip 1.2, minpx 0.5, maxpx 256,
+//                cone 0.3, behind 0.1; any knob given in the URL still wins.
 const IS_QUEST = /OculusBrowser|Quest/i.test(navigator.userAgent);
-const BUDGET = Number(params.get('budget')) ? Number(params.get('budget')) * 1000 : (IS_QUEST ? 500000 : 2500000);
+const PRESET = params.get('preset') === 'fast' ? 'fast' : 'off';
+const FAST = { budget: 300, stddev: 2.4, lodpx: 2, sortms: 33, clip: 1.2, minpx: 0.5, maxpx: 256, cone: 0.3, behind: 0.1 };
+function knob(name, def) {
+  const v = params.get(name);
+  if (v !== null && v !== '' && Number.isFinite(Number(v))) return Number(v);
+  return PRESET === 'fast' && name in FAST ? FAST[name] : def;
+}
+const BUDGET = knob('budget', 0) ? knob('budget', 0) * 1000 : (IS_QUEST ? 500000 : 2500000);
 const JANE_LOD = params.get('janelod') === '1';
 const FB = Math.min(1.5, Math.max(0.3, Number(params.get('fb')) || 1));
-const STDDEV = Number(params.get('stddev')) || 0;
+const STDDEV = knob('stddev', 0);
+const LODPX = knob('lodpx', 1);
+const SORTMS = knob('sortms', 0);
+const CLIP = knob('clip', 1.4);
+const MINPX = knob('minpx', 0);
+const MAXPX = knob('maxpx', 512);
+const MINALPHA = knob('minalpha', 0.5);
+const CONE = knob('cone', 0.4);
+const BEHIND = knob('behind', 0.2);
+const FFR = Math.min(1, Math.max(0, knob('ffr', 1)));
 
 // Placeholder poses: the same scan turned by a different angle each, so the
 // swap is visible. Real poses replace these one for one.
@@ -123,8 +149,8 @@ if (SET === 'surf') {
 }
 
 // Option chips on the start card are plain links that reload with new params.
-const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '2', '3', '8'], roomq: Object.keys(ROOMS), budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'] };
-const CURRENT = { roomq: ROOMQ, q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0' };
+const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '2', '3', '8'], roomq: Object.keys(ROOMS), budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'], preset: ['off', 'fast'], stddev: ['2.83', '2.4', '2'], lodpx: ['1', '2', '3'], ffr: ['1', '0.5', '0'] };
+const CURRENT = { roomq: ROOMQ, q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0', preset: PRESET, stddev: STDDEV ? String(STDDEV) : '2.83', lodpx: String(LODPX), ffr: String(FFR) };
 for (const box of document.querySelectorAll('.opts')) {
   const key = box.dataset.param;
   if (SET === 'surf' && (key === 'mode' || key === 'poses')) { box.closest('fieldset').hidden = true; continue; }
@@ -145,7 +171,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x000000, 1);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
-renderer.xr.setFoveation(1);
+renderer.xr.setFoveation(FFR);
 renderer.xr.setFramebufferScaleFactor(FB);
 document.body.prepend(renderer.domElement);
 
@@ -159,9 +185,13 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-const spark = new SparkRenderer({ renderer, lodSplatCount: BUDGET, ...(STDDEV ? { maxStdDev: STDDEV } : {}) });
-spark.lodSplatCount = BUDGET;
-if (STDDEV) spark.maxStdDev = STDDEV;
+const SPARK_KNOBS = {
+  lodSplatCount: BUDGET, lodRenderScale: LODPX, minSortIntervalMs: SORTMS, clipXY: CLIP,
+  minPixelRadius: MINPX, maxPixelRadius: MAXPX, minAlpha: MINALPHA / 255,
+  coneFoveate: CONE, behindFoveate: BEHIND, ...(STDDEV ? { maxStdDev: STDDEV } : {}),
+};
+const spark = new SparkRenderer({ renderer, ...SPARK_KNOBS });
+Object.assign(spark, SPARK_KNOBS);
 scene.add(spark);
 
 // ---------- room scan ----------
@@ -378,14 +408,15 @@ function perfLines() {
     `${perf.fps} fps${hz}   frame ${perf.avgMs.toFixed(1)} ms   worst ${perf.worstMs.toFixed(1)} ms`,
     `slow frames ${perf.slowRate}/s (total ${perf.slowTotal})   js ${perf.cpuMs.toFixed(1)} ms${mem ? `   heap ${mem} MB` : ''}`,
     `~${fmt(drawn)} splats drawn   room ${roomRoot.visible ? ROOMQ : 'off'}   Jane ${Q}${JANE_LOD ? ' (LoD)' : ''}`,
-    `budget ${fmt(BUDGET)}   resolution ${FB}${STDDEV ? `   stddev ${STDDEV}` : ''}`,
+    `budget ${fmt(BUDGET)}   resolution ${FB}   ffr ${FFR}${PRESET === 'fast' ? '   preset fast' : ''}`,
+    `stddev ${STDDEV || 2.83}  lodpx ${LODPX}  sort ${SORTMS}ms  clip ${CLIP}`,
     `${MODE}: pose ${poseState.index + 1}/${POSES.length} ${pose?.name || ''}   in memory ${fmt(janeSplats)}`,
     `last ${MODE === 'stream' ? 'decode' : 'load'} ${Math.round(poseState.lastLoadMs)} ms   swap hitch ${poseState.lastHitchMs.toFixed(1)} ms`,
   ];
 }
 
 // In-headset panel, slightly below the view and tilted up.
-const HUD_W = 900, HUD_H = 372;
+const HUD_W = 900, HUD_H = 414;
 const hudCanvas = document.createElement('canvas');
 hudCanvas.width = HUD_W; hudCanvas.height = HUD_H;
 const hudTex = new THREE.CanvasTexture(hudCanvas);
@@ -416,7 +447,7 @@ function drawHud() {
     g.fillStyle = '#f2c45a';
     g.font = 'italic 24px system-ui, sans-serif';
     const t = vo.text.length > 70 ? `${vo.text.slice(0, 68)}…` : vo.text;
-    g.fillText(`Jane: ${t}`, 24, 72 + 5 * 42 + 8);
+    g.fillText(`Jane: ${t}`, 24, 72 + 6 * 42 + 8);
   }
   hudTex.needsUpdate = true;
   hudDom.textContent = lines.join('\n') + (vo.text ? `\nJane: ${vo.text}` : '');
