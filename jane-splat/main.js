@@ -23,19 +23,31 @@
 //                                     the table, about 0.8 m from you); she turns to face you
 //   ?dist=1.3                         old placement: straight ahead at this distance (ends up in the table)
 //   ?lod=0                            no Spark LoD on the room
+//   ?set=surf                         only the surfboard Jane (surf.sog, 900k, anti-aliased) in the room;
+//                                     ?q= then picks 900k (SH3, SPZ) | 900k-sh0 | 500k | 300k | 200k | 100k
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { SCRIPTED } from '../jane/persona.js';
 
 const params = new URLSearchParams(location.search);
-const QUALITIES = {
+const SET = params.get('set') === 'surf' ? 'surf' : 'poses';
+const SURF_QUALITIES = {
+  '900k': { url: '../assets/jane/surf-900k.spz', count: 900642, note: 'original, SH3' },
+  '900k-sh0': { url: '../assets/jane/surf-900k-sh0.sog', count: 900642, note: 'no SH' },
+  '500k': { url: '../assets/jane/surf-500k.sog', count: 500000, note: 'no SH' },
+  '300k': { url: '../assets/jane/surf-300k.sog', count: 300000, note: 'no SH' },
+  '200k': { url: '../assets/jane/surf-200k.sog', count: 200000, note: 'no SH' },
+  '100k': { url: '../assets/jane/surf-100k.sog', count: 100000, note: 'no SH' },
+};
+const POSE_QUALITIES = {
   '315k': { url: '../assets/jane/jane-315k.sog', count: 315490, note: 'original, SH3' },
   '315k-sh0': { url: '../assets/jane/jane-315k-sh0.sog', count: 315490, note: 'no SH' },
   '200k': { url: '../assets/jane/jane-200k.sog', count: 200000, note: 'no SH' },
   '150k': { url: '../assets/jane/jane-150k.sog', count: 150000, note: 'no SH' },
   '75k': { url: '../assets/jane/jane-75k.sog', count: 75000, note: 'no SH' },
 };
-const Q = QUALITIES[params.get('q')] ? params.get('q') : '200k';
+const QUALITIES = SET === 'surf' ? SURF_QUALITIES : POSE_QUALITIES;
+const Q = QUALITIES[params.get('q')] ? params.get('q') : (SET === 'surf' ? '300k' : '200k');
 const MODE = params.get('mode') === 'stream' ? 'stream' : 'preload';
 const EVERY = Math.max(1, Number(params.get('every')) || 5);
 const FADE = Math.max(0, Number(params.get('fade')) || 0);
@@ -46,6 +58,7 @@ const USE_LOD = params.get('lod') !== '0';
 // Room scan: ?roomq=400k (default) or 900k (the opening scene's file). Both
 // are decimated from the 4.4M scan.
 const ROOMS = {
+  '200k': { url: '../assets/room-200k.sog', count: 200000 },
   '400k': { url: '../assets/room-400k.sog', count: 400000 },
   '900k': { url: '../assets/room.sog', count: 900000 },
 };
@@ -91,8 +104,11 @@ const PLACEHOLDER = [
   { name: 'laugh', yaw: 14 },
 ];
 const URLS = (params.get('urls') || '').split(',').map((s) => s.trim()).filter(Boolean);
-const N_POSES = URLS.length || Math.min(REAL.length + PLACEHOLDER.length - 1, Math.max(1, Number(params.get('poses')) || 3));
+// Surfboard Jane: same Postshot units as NEW (feet at about -0.1).
+const SCAN_SURF = { height: 1.634, feetY: -0.065, cx: -0.003, cz: -0.19, yaw: 0, aa: true };
+const N_POSES = SET === 'surf' ? 1 : URLS.length || Math.min(REAL.length + PLACEHOLDER.length - 1, Math.max(1, Number(params.get('poses')) || 3));
 const POSES = Array.from({ length: N_POSES }, (_, i) => {
+  if (SET === 'surf') return { name: 'surf', yaw: 0, scan: SCAN_SURF, url: QUALITIES[Q].url, count: QUALITIES[Q].count };
   if (URLS.length) return { name: URLS[i].split('/').pop().replace(/\.\w+$/, ''), yaw: 0, scan: SCAN1, url: URLS[i], count: 0 };
   if (i < REAL.length) return { ...REAL[i], url: REAL[i].url || QUALITIES[Q].url, count: i === 0 ? QUALITIES[Q].count : 0 };
   return { ...PLACEHOLDER[i - REAL.length + 1], scan: SCAN1, url: QUALITIES[Q].url, count: QUALITIES[Q].count };
@@ -100,12 +116,18 @@ const POSES = Array.from({ length: N_POSES }, (_, i) => {
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
+if (SET === 'surf') {
+  document.querySelector('h1').textContent = 'Surf Jane splat test';
+  document.querySelector('.sub').textContent = 'Jane with the surfboard in the room scan, with a live performance readout. Pick her splat count and the room\'s below.';
+  document.title = 'Surf Jane splat test';
+}
 
 // Option chips on the start card are plain links that reload with new params.
 const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '2', '3', '8'], roomq: Object.keys(ROOMS), budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'] };
 const CURRENT = { roomq: ROOMQ, q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0' };
 for (const box of document.querySelectorAll('.opts')) {
   const key = box.dataset.param;
+  if (SET === 'surf' && (key === 'mode' || key === 'poses')) { box.closest('fieldset').hidden = true; continue; }
   for (const v of CHIPS[key]) {
     const p = new URLSearchParams(location.search); p.set(key, v);
     const a = document.createElement('a');
