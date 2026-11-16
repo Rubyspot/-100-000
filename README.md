@@ -1,15 +1,31 @@
-# $100,000 – opening scene prototype
+# $100,000 – opening
 
-WebXR draft of the opening: mixed reality, a $100 bill falls from the ceiling, a
-seagull flies out of a portal standing in the room's entrance, grabs it and flies
-back in, then the player flies through the portal and on toward the coffee table.
+WebXR opening of the "$100,000" experience: mixed reality, "Seagulls Love Too"
+starts, a $100 bill falls from the ceiling, a seagull flies out of a portal
+standing in the room's entrance, grabs it and flies back in, then the player
+flies through the portal into the room scan. Jane's splat forms there out of
+particles, stays 10 s, turns into her second scan through a swirl of particles,
+and the gold ball starts the 180° video. The song fades out when the video starts.
 
 - three.js + [Spark 2](https://sparkjs.dev) for splats, vendored in `vendor/` (no build step).
-- `assets/room.sog`: "Room splat" scan decimated from 4.4M to 900k splats, no SH. Landmarks (entrance, table, desk) are at the top of `main.js`.
-- Open the page in Quest Browser and tap **Enter mixed reality**. Pinch to replay.
+- `assets/room-400k.sog`: "Room splat" scan decimated from 4.4M to 400k splats, no SH, lifted 7 cm
+  so its floor meets the real one. Landmarks (entrance, table, desk) are at the top of `main.js`.
+- `assets/seagull/`: Ilia's rigged seagull with its fly loop, and the twisted bill, converted from his
+  FBX files by `tools/fbx-to-glb/convert.cjs` (what it changes is in its header). The gull is painted
+  with vertex colours (`tools/fbx-to-glb/gull-paint.js`) until its textures (T_Seagull_D/N,
+  T_SeagullFeathers_D/N, T_SeagullEye_D) are added.
+- `jane/splat-jane.js`: Jane's two splat scans (surfboard, then NEW; 150k each) and the particle
+  transformation between them, a Spark dyno modifier modelled on Spark's own "Splat Transitions".
+- Quest settings are Ilia's picks from the Jane splat test: splat budget 500k, 80% resolution, fixed
+  foveation 1, fast preset (`?budget`, `?fb`, `?ffr`, `?stddev`, `?lodpx`, `?sortms`, `?clip`,
+  `?minpx`, `?maxpx`, `?cone`, `?behind` override them, as on the test page).
+- Open the page in Quest Browser and tap **Enter mixed reality**.
 
 URL options: `?debug` (fps label in headset), `?to=desk` (fly to the desk instead of the coffee table), `?lod=0`
-(disable Spark LoD), `?scan=<url>` (load another .sog/.spz/.ply), `?autostart` (flat preview).
+(disable Spark LoD), `?scan=<url>` (load another .sog/.spz/.ply), `?floor=0.07` (lift the room scan, metres),
+`?spot=-0.68,-1.93` (where Jane stands, room-scan x,z), `?height=1.75` (Jane's height), `?sparks=0.35`
+(share of her splats that fly as sparks when she transforms, 1 = all), `?music=0.55`
+(song volume, 0 mutes), `?jane=off` (no Jane), `?autostart` (flat preview).
 
 Run locally: `python3 -m http.server` in this folder, open http://localhost:8000.
 
@@ -66,7 +82,8 @@ the extra poses are the same scan turned a few degrees.
 
 - **Enter VR** puts you in the room scan; **Enter MR** shows Jane alone in passthrough.
 - Left pinch hides or shows the room, right pinch jumps to the next pose.
-- Defaults: room 400k (`assets/room-400k.sog`, `?roomq=900k` for the opening's file), Jane 200k.
+- Defaults (Ilia's Quest picks): room 400k lifted 7 cm (`?roomq=`, `?floor=`), Jane 150k standing at
+  `?spot=-0.68,-1.93`, budget 500k, resolution 0.8, fast preset, foveation 1.
 - `?q=315k|315k-sh0|200k|150k|75k` picks the Jane file (`assets/jane/`), `?mode=preload|stream`
   (all poses decoded up front, or each decoded at swap time), `?poses=1..6`, `?every=5`,
   `?fade=0.3` (cross-fade), `?urls=a.sog,b.sog` (real pose files), `?height=1.65`, `?hz=90`, `?vo=0`.
