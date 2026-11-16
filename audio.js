@@ -62,6 +62,10 @@ export class GullVoice {
     this.audio.setRefDistance(0.5);
     this.audio.setRolloffFactor(1.1);
     object.add(this.audio);
+    // Everything goes through one gain, so the bird can fade out as it flies off.
+    this.master = this.ctx.createGain();
+    this.master.connect(this.audio.panner);
+    this.level = 1;
     this.flapBuf = makeFlap(this.ctx);
     this.calls = [
       makeCall(this.ctx, [{ at: 0, dur: 0.55, f0: 950, f1: 2100, f2: 1250 }]),
@@ -74,14 +78,24 @@ export class GullVoice {
     ];
   }
 
+  // 0..1; ramps over `seconds` so a fade never clicks.
+  setLevel(level, seconds = 0.05) {
+    if (Math.abs(level - this.level) < 1e-3) return;
+    this.level = level;
+    const g = this.master.gain, now = this.ctx.currentTime;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    g.linearRampToValueAtTime(level, now + Math.max(0.01, seconds));
+  }
+
   play(buffer, gain, rate = 1) {
-    if (this.ctx.state !== 'running') return;
+    if (this.ctx.state !== 'running' || this.level < 0.01) return;
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     src.playbackRate.value = rate;
     const g = this.ctx.createGain();
     g.gain.value = gain;
-    src.connect(g).connect(this.audio.panner);
+    src.connect(g).connect(this.master);
     src.start();
   }
 

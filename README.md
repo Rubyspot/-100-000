@@ -1,8 +1,9 @@
 # $100,000 – opening
 
 WebXR opening of the "$100,000" experience: mixed reality, "Seagulls Love Too"
-starts, a $100 bill falls from the ceiling, a seagull flies out of a portal
-standing in the room's entrance, grabs it and flies back in, then the player
+starts, a portal opens in the room's entrance and a seagull comes out and lands
+on top of its rim. A $100 bill flutters down from the ceiling, the gull snatches
+it out of the air and flies back in (its sounds fade as it goes), then the player
 flies through the portal into the room scan. Jane's splat forms there out of
 particles, stays 10 s, turns into her second scan through a swirl of particles,
 and the gold ball starts the 180° video. The song fades out when the video starts.
@@ -13,7 +14,8 @@ and the gold ball starts the 180° video. The song fades out when the video star
 - `assets/seagull/`: Ilia's rigged seagull with its fly loop, and the twisted bill, converted from his
   FBX files by `tools/fbx-to-glb/convert.cjs` (what it changes is in its header). The gull is painted
   with vertex colours (`tools/fbx-to-glb/gull-paint.js`) until its textures (T_Seagull_D/N,
-  T_SeagullFeathers_D/N, T_SeagullEye_D) are added.
+  T_SeagullFeathers_D/N, T_SeagullEye_D) are added. It has no sitting animation, so `foldWings` in
+  `main.js` folds its wings in code and it stands on its rest-pose legs on the rim.
 - `jane/splat-jane.js`: Jane's two splat scans (surfboard, then NEW; 150k each) and the particle
   transformation between them, a Spark dyno modifier modelled on Spark's own "Splat Transitions".
 - Quest settings are Ilia's picks from the Jane splat test: splat budget 500k, 80% resolution, fixed
@@ -35,6 +37,13 @@ After the flight a gold ball floats in front of the player: touch it (or pinch
 while pointing at it) to play the 180° side-by-side video. On Quest it plays on
 a WebXR equirect media layer (sharp, nearly free on the GPU); elsewhere it falls
 back to a textured half sphere.
+
+While it plays, three palm-sized buttons (8.4 cm) wait within reach about 30°
+below eye level (`video-controls.js`): back 10 s, pause / play and close, with
+the playing time above them. Press one with a fingertip, or point a controller
+(or a pinching hand) at it and pull the trigger (pinch); on a flat screen,
+click. The plate dims while you aren't looking at it or reaching for it. Close
+goes back to the room and Jane. Skipping back re-fetches segments if needed.
 
 Two copies, tried in order (first one the browser can decode plays):
 
