@@ -18,7 +18,7 @@
 //   ?vo=0                             no voiceover
 //   ?hz=90                            ask Quest for 90 Hz (default: the headset's own rate, 72)
 //   ?face=0                           extra yaw in degrees if Jane faces the wrong way
-//   ?height=1.65                      Jane's height in metres
+//   ?height=1.75                      Jane's height in metres (default 1.75)
 //   ?spot=-0.3,-2.25                  where Jane stands, in room-scan x,z (default: clear floor right of
 //                                     the table, about 0.8 m from you); she turns to face you
 //   ?dist=1.3                         old placement: straight ahead at this distance (ends up in the table)
@@ -231,9 +231,10 @@ roomRoot.visible = params.get('room') !== '0';
 
 // ---------- Jane ----------
 // Her scan is y down, 3.67 units from feet to head, so it is scaled to
-// ?height (default 1.65 m). She stands 1.3 m in front of the player and her
+// ?height (default 1.75 m). She stands beside the coffee table (?spot) and her
 // scan already faces +Z, toward them.
-const JANE_HEIGHT = Number(params.get('height')) || 1.65;
+// 1.75 m (Ilia, Nov 16; was 1.65 m).
+const JANE_HEIGHT = Number(params.get('height')) || 1.75;
 const janeRoot = new THREE.Group();
 if (params.get('dist')) {
   janeRoot.position.set(0, 0, -Number(params.get('dist')));
