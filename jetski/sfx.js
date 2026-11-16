@@ -4,6 +4,12 @@
 //   where the unloaded engine revs up and gets brighter.
 // - Ocean bed, splashes sized by landing speed, cash "cha-ching", and the
 //   Crispy J playlist.
+// - Space: a reverb send and a slap-back echo whose delay follows the
+//   distance to the walls, so the gorge, the canals and the bridges sound
+//   enclosed; Jane's engine gets an exaggerated Doppler as she passes.
+// - Race sounds: wind that builds with speed, hull slaps, wall scrapes and
+//   thuds, a boost whoosh, gate chimes that climb with Hype, countdown
+//   beeps, a lap bell, the finish fanfare and the waterfall's roar.
 // Recorded files can replace the synthesized ones: drop engine.mp3,
 // ocean.mp3 or splash.mp3 into jetski/audio/ and list them in sounds.json.
 const SR = 44100;
@@ -93,6 +99,54 @@ function makeCash(ctx) {
   });
 }
 
+function makeThud(ctx) {
+  return buffer(ctx, 0.5, 1, (d) => {
+    let lp = 0;
+    for (let i = 0; i < d.length; i++) {
+      const t = i / SR;
+      lp += 0.08 * ((Math.random() * 2 - 1) - lp);
+      d[i] = Math.sin(2 * Math.PI * (70 + 60 * Math.exp(-t / 0.03)) * t) * Math.exp(-t / 0.08) * 0.9 + lp * 3 * Math.exp(-t / 0.05);
+    }
+  });
+}
+
+function makeSlap(ctx) {
+  return buffer(ctx, 0.35, 1, (d) => {
+    let lp = 0;
+    for (let i = 0; i < d.length; i++) {
+      const t = i / SR;
+      lp += 0.12 * ((Math.random() * 2 - 1) - lp);
+      d[i] = (lp * 2.2 + Math.sin(2 * Math.PI * 95 * t) * 0.5) * Math.min(1, t / 0.003) * Math.exp(-t / 0.05);
+    }
+  });
+}
+
+function makeWhoosh(ctx) {
+  return buffer(ctx, 1.4, 2, (d, ch) => {
+    let lp = 0, prev = 0;
+    for (let i = 0; i < d.length; i++) {
+      const t = i / SR;
+      const cut = 0.03 + 0.4 * Math.pow(Math.min(1, t / 0.35), 2) * Math.exp(-Math.max(0, t - 0.35) / 0.4);
+      lp += cut * ((Math.random() * 2 - 1) - lp);
+      const hp = lp - prev; prev = lp;
+      const env = Math.min(1, t / 0.25) * Math.exp(-Math.max(0, t - 0.3) / 0.35);
+      d[i] = (lp * 0.8 + hp * 1.6) * env * (ch ? 0.9 : 1);
+    }
+  });
+}
+
+// Reverb impulse: decaying stereo noise with a darker tail.
+function makeImpulse(ctx, seconds) {
+  return buffer(ctx, seconds, 2, (d) => {
+    let lp = 0;
+    for (let i = 0; i < d.length; i++) {
+      const t = i / SR;
+      lp += (0.5 * Math.exp(-t / 0.6) + 0.05) * ((Math.random() * 2 - 1) - lp);
+      d[i] = lp * Math.exp(-t / (seconds * 0.28)) * (i < SR * 0.012 ? i / (SR * 0.012) : 1);
+    }
+  });
+}
+
 async function tryLoad(ctx, url) {
   try {
     const r = await fetch(url);
@@ -133,16 +187,17 @@ export class EngineSound {
   }
 
   // rpm 0..~1.1, speed m/s, wet 0..1, airborne bool
-  set(rpm, speed, wet, airborne) {
+  // pitch: extra factor (Doppler); boost 0..1 brightens it
+  set(rpm, speed, wet, airborne, pitch = 1, boost = 0) {
     const t = this.ctx.currentTime;
-    const r = Math.max(0, rpm);
+    const r = Math.max(0, rpm) * (1 + boost * 0.12);
     // 1300 rpm idle to ~7800 rpm: playback 0.43 to 2.6 of the 3000 rpm loop.
-    const rate = this.recorded ? 0.7 + r * 0.9 : 0.43 + r * 2.0;
+    const rate = (this.recorded ? 0.7 + r * 0.9 : 0.43 + r * 2.0) * pitch;
     this.engine.playbackRate.setTargetAtTime(rate, t, 0.05);
     this.engineGain.gain.setTargetAtTime(0.35 + r * 0.45, t, 0.05);
     this.tone.frequency.setTargetAtTime((airborne ? 2600 : 900) + r * 2400, t, 0.06);
     const fire = 43 + r * 217;
-    this.whine.frequency.setTargetAtTime(fire * 6.5, t, 0.05);
+    this.whine.frequency.setTargetAtTime(fire * 6.5 * pitch, t, 0.05);
     this.whineGain.gain.setTargetAtTime(0.012 + r * r * (airborne ? 0.07 : 0.04), t, 0.06);
     this.rushFilter.frequency.setTargetAtTime(400 + speed * 70, t, 0.1);
     this.rushGain.gain.setTargetAtTime(airborne ? 0 : Math.min(1, speed / 14) * 0.35 * (0.3 + 0.7 * wet), t, airborne ? 0.03 : 0.12);
@@ -159,10 +214,26 @@ export class Sfx {
     this.buffers = {
       engine: makeEngineLoop(ctx),
       noise: makeNoiseLoop(ctx, 3, 1, 0.25),
+      brown: makeNoiseLoop(ctx, 4, 1, 0.03),
       ocean: makeOcean(ctx),
       splash: makeSplash(ctx),
       cash: makeCash(ctx),
+      thud: makeThud(ctx),
+      slap: makeSlap(ctx),
+      whoosh: makeWhoosh(ctx),
     };
+    // Effects bus: everything here is also sent to the reverb and the echo.
+    this.bus = ctx.createGain(); this.bus.connect(this.master);
+    this.reverbIn = ctx.createGain(); this.reverbIn.gain.value = 0;
+    const conv = ctx.createConvolver(); conv.buffer = makeImpulse(ctx, 2.2);
+    this.bus.connect(this.reverbIn).connect(conv).connect(this.master);
+    this.echoIn = ctx.createGain(); this.echoIn.gain.value = 0;
+    this.echo = ctx.createDelay(1); this.echo.delayTime.value = 0.08;
+    const fb = ctx.createGain(); fb.gain.value = 0.32;
+    const echoTone = ctx.createBiquadFilter(); echoTone.type = 'lowpass'; echoTone.frequency.value = 2400;
+    this.bus.connect(this.echoIn).connect(this.echo).connect(echoTone).connect(this.master);
+    echoTone.connect(fb).connect(this.echo);
+    this.loops = {};
     this.musicGain = ctx.createGain(); this.musicGain.gain.value = 0.55; this.musicGain.connect(this.master);
     this.music = null;
   }
@@ -178,7 +249,70 @@ export class Sfx {
     if (splash) this.buffers.splash = splash;
   }
 
-  engine(dest, volume) { return new EngineSound(this.ctx, dest || this.master, this.buffers, volume); }
+  engine(dest, volume) { return new EngineSound(this.ctx, dest || this.bus, this.buffers, volume); }
+
+  // A looping buffer through a filter and gain, for wind, scrape and the waterfall.
+  loop(name, buf, type, freq, q, dest) {
+    const src = this.ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const f = this.ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = this.ctx.createGain(); g.gain.value = 0;
+    src.connect(f).connect(g).connect(dest || this.master);
+    src.start(0, Math.random() * buf.duration);
+    this.loops[name] = { src, f, g };
+    return this.loops[name];
+  }
+
+  // Enclosure 0..1 and the distance to the nearest wall, in metres.
+  setSpace(enclosure, wallDist) {
+    const t = this.ctx.currentTime;
+    this.reverbIn.gain.setTargetAtTime(enclosure * 0.55, t, 0.25);
+    this.echoIn.gain.setTargetAtTime(enclosure * 0.5, t, 0.25);
+    this.echo.delayTime.setTargetAtTime(Math.min(0.35, Math.max(0.025, (2 * wallDist) / 343)), t, 0.2);
+  }
+
+  // Per-frame levels: speed m/s, airborne, scrape 0..1.
+  setRace(speed, airborne, scrape) {
+    const t = this.ctx.currentTime;
+    const w = this.loops.wind, s = this.loops.scrape;
+    if (w) {
+      w.g.gain.setTargetAtTime(Math.min(0.5, (speed / 22) ** 2 * 0.32 + (airborne ? 0.12 : 0)), t, 0.15);
+      w.f.frequency.setTargetAtTime(500 + speed * 55 + (airborne ? 500 : 0), t, 0.2);
+    }
+    if (s) {
+      s.g.gain.setTargetAtTime(scrape * 0.5, t, scrape > 0 ? 0.02 : 0.08);
+      s.f.frequency.setTargetAtTime(1400 + scrape * 1800, t, 0.05);
+    }
+  }
+
+  tone(freq, start, dur, type = 'sine', gain = 0.2, dest = null) {
+    const ctx = this.ctx, t = ctx.currentTime + start;
+    const o = ctx.createOscillator(); o.type = type; o.frequency.value = freq;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(gain, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g).connect(dest || this.bus);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+
+  // Gate chime: climbs a major pentatonic scale with the Hype level.
+  chime(level) {
+    if (this.ctx.state !== 'running') return;
+    const scale = [0, 2, 4, 7, 9, 12, 14];
+    const f = 587.33 * Math.pow(2, scale[Math.min(scale.length - 1, level)] / 12);
+    this.tone(f, 0, 0.6, 'sine', 0.16); this.tone(f * 2, 0, 0.35, 'sine', 0.05); this.tone(f * 1.5, 0.07, 0.5, 'triangle', 0.06);
+  }
+  gate() { if (this.ctx.state === 'running') this.tone(440, 0, 0.25, 'triangle', 0.08); }
+  hypeLost() { if (this.ctx.state !== 'running') return; this.tone(392, 0, 0.25, 'sawtooth', 0.05); this.tone(293.7, 0.12, 0.4, 'sawtooth', 0.05); }
+  beep(high) { if (this.ctx.state === 'running') this.tone(high ? 880 : 440, 0, high ? 0.7 : 0.25, 'square', 0.07, this.master); }
+  bell() { if (this.ctx.state !== 'running') return; [0, 0.18].forEach((d) => { this.tone(1046.5, d, 1.2, 'sine', 0.12); this.tone(2093, d, 0.6, 'sine', 0.04); }); }
+  fanfare(won) {
+    if (this.ctx.state !== 'running') return;
+    const notes = won ? [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5] : [523.25, 493.88, 466.16, 440];
+    notes.forEach((f, i) => { this.tone(f, i * 0.14, 0.5 + (i === notes.length - 1 ? 0.8 : 0), 'triangle', 0.12, this.master); this.tone(f / 2, i * 0.14, 0.4, 'square', 0.03, this.master); });
+  }
+  boost() { this.play('whoosh', 0.9, 1); }
+  thud(v, pos) { this.play('thud', Math.min(1.4, 0.3 + v * 0.12), 0.9 + Math.random() * 0.2, pos); }
+  slap(v) { this.play('slap', Math.min(0.7, 0.12 + v * 0.2), 0.85 + Math.random() * 0.3); }
 
   startAmbience() {
     if (this.oceanSrc) return;
@@ -188,6 +322,22 @@ export class Sfx {
     const g = this.ctx.createGain(); g.gain.value = 0.28;
     this.oceanSrc.connect(f).connect(g).connect(this.master);
     this.oceanSrc.start();
+    this.loop('wind', this.buffers.noise, 'bandpass', 900, 0.5);
+    this.loop('scrape', this.buffers.noise, 'bandpass', 1800, 2.2, this.bus);
+  }
+
+  // The waterfall's roar, positioned in the world.
+  startWaterfall(pos) {
+    if (this.loops.falls) return;
+    const p = this.pannerAt(pos);
+    p.refDistance = 7; p.rolloffFactor = 1.4;
+    const l = this.loop('falls', this.buffers.brown, 'lowpass', 1600, 0.4, p);
+    l.g.gain.value = 1.6;
+    // A brighter hiss on top.
+    const h = this.ctx.createBufferSource(); h.buffer = this.buffers.noise; h.loop = true;
+    const hf = this.ctx.createBiquadFilter(); hf.type = 'highpass'; hf.frequency.value = 2500;
+    const hg = this.ctx.createGain(); hg.gain.value = 0.25;
+    h.connect(hf).connect(hg).connect(p); h.start();
   }
 
   // A panner at a world position (the listener follows the camera).
@@ -195,7 +345,7 @@ export class Sfx {
     const p = this.ctx.createPanner();
     p.panningModel = 'HRTF'; p.distanceModel = 'inverse'; p.refDistance = 4; p.rolloffFactor = 1.2;
     p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z;
-    p.connect(this.master);
+    p.connect(this.bus);
     return p;
   }
 
@@ -205,7 +355,7 @@ export class Sfx {
     src.buffer = this.buffers[name];
     src.playbackRate.value = rate;
     const g = this.ctx.createGain(); g.gain.value = gain;
-    src.connect(g).connect(pos ? this.pannerAt(pos) : this.master);
+    src.connect(g).connect(pos ? this.pannerAt(pos) : this.bus);
     src.start();
   }
 

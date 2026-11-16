@@ -23,7 +23,8 @@ export const TOP_SPEED = 19.5;
 const THRUST = MASS * 6.2;                // full-throttle jet thrust, N
 const LIN_DRAG = 55;
 const QUAD_DRAG = (THRUST - LIN_DRAG * TOP_SPEED) / (TOP_SPEED * TOP_SPEED);
-const TURN = 1.05;                        // rad/s at full lock and throttle
+const TURN = 1.2;                         // rad/s at full lock and throttle
+export const BOOST = 0.55;                // extra thrust while boosting
 
 export class Craft {
   constructor() {
@@ -34,7 +35,7 @@ export class Craft {
   reset(x, z, yaw) {
     Object.assign(this, {
       x, z, y: 0, vx: 0, vy: 0, vz: 0, yaw, yawRate: 0, pitch: 0, pitchRate: 0, roll: 0,
-      rpm: 0, throttle: 0, steer: 0, airborne: false, airTime: 0, wet: 1, intakeWet: true,
+      rpm: 0, throttle: 0, steer: 0, airborne: false, airTime: 0, wet: 1, intakeWet: true, boost: 0,
       speed: 0, fwdSpeed: 0, landing: 0, spray: 0, lean: 0,
     });
   }
@@ -46,6 +47,7 @@ export class Craft {
     const h = dt / n;
     this.landing = 0;
     for (let i = 0; i < n; i++) this.substep(h, controls, env);
+    this.boost = Math.max(0, this.boost - dt);
     this.speed = Math.hypot(this.vx, this.vz);
   }
 
@@ -95,7 +97,8 @@ export class Craft {
     const tau = this.intakeWet ? 0.35 : 0.12;
     this.rpm += (target - this.rpm) * Math.min(1, h / tau);
     this.throttle = ctl.throttle;
-    const thrust = this.intakeWet ? THRUST * this.thrustScale * Math.min(1, this.rpm) ** 2 : 0;
+    const boosting = this.boost > 0 && ctl.throttle > 0.3;
+    const thrust = this.intakeWet ? THRUST * this.thrustScale * (boosting ? 1 + BOOST : 1) * Math.min(1, this.rpm) ** 2 : 0;
 
     // Forces along the hull.
     let ff = thrust;

@@ -34,7 +34,7 @@ export function createDolphins({ scene, track, ocean, sfx }) {
     scene.add(m);
     pod.push({ m, lat: (i % 2 ? 1 : -1) * (7 + i * 2.2), lead: 6 + i * 4, phase: i * 0.7, wasUp: false });
   }
-  const windows = [[0.09, 0.2], [0.66, 0.8]]; // track fractions where the pod shows up
+  const windows = track.dolphinWindows; // track fractions where the pod shows up
   const tmp = new THREE.Vector3();
 
   function update(dt, t, player, playerU) {

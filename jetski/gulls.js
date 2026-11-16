@@ -84,13 +84,21 @@ export function createGulls({ scene, listener, sfx, ocean }) {
 
   // "+$100" pop-ups.
   const pops = [];
-  {
+  const popTex = new Map();
+  const popTexture = (value) => {
+    if (popTex.has(value)) return popTex.get(value);
     const cv = document.createElement('canvas'); cv.width = 256; cv.height = 96;
     const g = cv.getContext('2d');
-    g.font = '800 64px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.lineWidth = 8; g.strokeStyle = '#1d3a26'; g.strokeText('+$100', 128, 50);
-    g.fillStyle = '#9cff9c'; g.fillText('+$100', 128, 50);
+    const text = '+$' + value.toLocaleString('en-US');
+    g.font = `800 ${text.length > 5 ? 54 : 64}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineWidth = 8; g.strokeStyle = '#1d3a26'; g.strokeText(text, 128, 50);
+    g.fillStyle = value > 100 ? '#ffd23f' : '#9cff9c'; g.fillText(text, 128, 50);
     const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+    popTex.set(value, tex);
+    return tex;
+  };
+  {
+    const tex = popTexture(100);
     for (let i = 0; i < 4; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, fog: false }));
       s.scale.set(0.24, 0.09, 1);
@@ -102,7 +110,7 @@ export function createGulls({ scene, listener, sfx, ocean }) {
   }
   let popNext = 0;
 
-  const state = { caught: 0, onCatch: null };
+  const state = { caught: 0, onCatch: null, value: 100, money: 0, cool: 0 };
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3(1, 1, 1), _v = new THREE.Vector3();
 
   function ensureGulls(n, player) {
@@ -131,7 +139,8 @@ export function createGulls({ scene, listener, sfx, ocean }) {
     const catchY = player.y + 1.1;
     const T = Math.max(1.2, (p.y - catchY) / FALL_SPEED);
     // Aim at the left of the seat where the player will be after T.
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), lx = -Math.cos(player.yaw), lz = Math.sin(player.yaw);
+    const side = player.side || -1;
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), lx = Math.cos(player.yaw) * side, lz = -Math.sin(player.yaw) * side;
     const travel = Math.max(0, player.fwdSpeed) * T;
     const target = new THREE.Vector3(player.x + fx * travel + lx * 0.5, catchY, player.z + fz * travel + lz * 0.5);
     bills.push({
@@ -142,10 +151,13 @@ export function createGulls({ scene, listener, sfx, ocean }) {
   }
 
   function update(dt, t, player, catchers, active) {
+    state.cool -= dt;
     const want = active ? Math.min(8, 2 + Math.floor(state.caught / 3)) : 2;
     ensureGulls(want, player);
     const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    const lx = -rx, lz = -rz;
+    // The free hand's side of the seat (-1 left, +1 right).
+    const side = player.side || -1;
+    const lx = rx * side, lz = rz * side;
 
     // The gull due to drop next flies to where its bill will meet the player.
     let dropper = null;
@@ -156,15 +168,15 @@ export function createGulls({ scene, listener, sfx, ocean }) {
       g.nextDrop -= dt;
       const isDropper = g === dropper && active;
       const ahead = isDropper ? THREE.MathUtils.clamp(Math.max(0, player.fwdSpeed) * fallT, 12, 90) : g.ahead + Math.sin(t * 0.2 + g.phase) * 8;
-      const side = isDropper ? -1.5 : g.side + Math.sin(t * 0.33 + g.phase) * 5;
+      const gside = isDropper ? 1.5 * side : g.side + Math.sin(t * 0.33 + g.phase) * 5;
       const height = isDropper ? 11.5 + player.y : g.height + Math.sin(t * 0.5 + g.phase) * 1.5;
-      _v.set(player.x + fx * ahead + rx * side, height, player.z + fz * ahead + rz * side);
+      _v.set(player.x + fx * ahead + rx * gside, height, player.z + fz * ahead + rz * gside);
       const o = g.obj;
       // Steer toward the slot with a cruise speed above the player's.
       const desired = _v.sub(o.position);
       const dist = desired.length();
       const maxV = Math.max(10, Math.abs(player.fwdSpeed) + 9);
-      desired.multiplyScalar(Math.min(maxV, dist * 1.2) / Math.max(0.001, dist));
+      desired.multiplyScalar(Math.min(maxV, dist * 2.5) / Math.max(0.001, dist));
       g.vel.lerp(desired, Math.min(1, dt * 1.6));
       o.position.addScaledVector(g.vel, dt);
       // Face along the flight, banking into turns.
@@ -184,11 +196,13 @@ export function createGulls({ scene, listener, sfx, ocean }) {
       }
       g.callAt -= dt;
       if (g.callAt < 0) { g.callAt = 4 + Math.random() * 7; const v = voices.find((vv) => vv.audio.parent === o); if (v) v.call(Math.floor(Math.random() * 2)); }
-      if (active && isDropper && g.nextDrop <= 0) {
+      if (active && isDropper && g.nextDrop <= 0 && state.cool <= 0) {
         const rel = (o.position.x - player.x) * fx + (o.position.z - player.z) * fz;
-        if (rel > 8 && Math.abs(rel - ahead) < 15) {
+        if (rel > 8 && rel < ahead + 20) {
           dropBill(g, player, t);
-          g.nextDrop = Math.max(1.8, 6 - state.caught * 0.15) * (0.7 + Math.random() * 0.6) / Math.max(1, gulls.length * 0.5);
+          // One bill at a time across the flock, more often as the flock grows.
+          state.cool = Math.max(1.3, 4 - state.caught * 0.06) * (0.7 + Math.random() * 0.6) / (1 + (gulls.length - 2) * 0.15);
+          g.nextDrop = state.cool * 2 + Math.random() * 2;
         }
       }
     }
@@ -214,8 +228,10 @@ export function createGulls({ scene, listener, sfx, ocean }) {
         if (caught) {
           bills.splice(i, 1);
           state.caught++;
+          state.money += state.value;
           sfx.cash();
           const pop = pops[popNext++ % pops.length];
+          pop.s.material.map = popTexture(state.value);
           pop.s.position.copy(b.pos); pop.age = 0; pop.s.visible = true;
           state.onCatch && state.onCatch(state.caught);
           continue;
@@ -249,6 +265,7 @@ export function createGulls({ scene, listener, sfx, ocean }) {
 
   function reset() {
     state.caught = 0;
+    state.money = 0;
     bills.length = 0;
     billMesh.count = 0;
   }

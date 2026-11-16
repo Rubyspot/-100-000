@@ -19,8 +19,15 @@ export const SKY_SAMPLE_GLSL = /* glsl */`
     float v = (el + 0.15) / (1.5708 + 0.15);
     return vec2(u, clamp(v, 0.0, 1.0));
   }
-  vec3 skyColor(vec3 d) { return texture2D(skyMap, skyUv(d)).rgb; }
-  vec4 skySample(vec3 d) { return texture2D(skyMap, skyUv(d)); }
+  // Gradients with the wrap at u = 0/1 removed, so the seam behind the
+  // sun doesn't drop to the smallest mip and draw a line.
+  vec4 skySample(vec3 d) {
+    vec2 uv = skyUv(d);
+    vec2 gx = dFdx(uv), gy = dFdy(uv);
+    gx.x -= floor(gx.x + 0.5); gy.x -= floor(gy.x + 0.5);
+    return textureGrad(skyMap, uv, gx, gy);
+  }
+  vec3 skyColor(vec3 d) { return skySample(d).rgb; }
 `;
 
 const BAKE_FRAG = /* glsl */`
