@@ -101,7 +101,9 @@ function makeGridGeometry() {
   return g;
 }
 
-export function createOcean({ sky, landTexture, landBounds }) {
+const CALM_MIN = 0.22, CALM_D0 = 2.0, CALM_D1 = 32.0;
+
+export function createOcean({ sky, landTexture, landBounds, landDist }) {
   const detail = makeDetailTexture();
   const uniforms = {
     ...sky.uniforms,
@@ -124,15 +126,20 @@ export function createOcean({ sky, landTexture, landBounds }) {
       #define WAVES ${WAVES.length}
       uniform float time; uniform vec3 camPos;
       uniform vec4 waveA[WAVES]; uniform vec4 waveB[WAVES];
+      uniform sampler2D landMap; uniform vec4 landBounds;
       varying vec3 vWorld; varying vec3 vNormal; varying float vCrest;
       void main() {
         vec3 p = (modelMatrix * vec4(position, 1.0)).xyz;
         float dist = length(p.xz - camPos.xz);
+        // Swell calms down in narrow water and near shores.
+        vec2 luv = (p.xz - landBounds.xy) / landBounds.z;
+        float ld = (luv.x > 0.0 && luv.x < 1.0 && luv.y > 0.0 && luv.y < 1.0) ? texture2D(landMap, luv).r * landBounds.w : 999.0;
+        float calm = mix(${CALM_MIN.toFixed(3)}, 1.0, smoothstep(${CALM_D0.toFixed(1)}, ${CALM_D1.toFixed(1)}, ld));
         vec3 disp = vec3(0.0), n = vec3(0.0, 1.0, 0.0);
         float crest = 0.0;
         for (int i = 0; i < WAVES; i++) {
           vec4 a = waveA[i]; vec4 b = waveB[i];
-          float fade = 1.0 - smoothstep(b.z, b.w, dist);
+          float fade = (1.0 - smoothstep(b.z, b.w, dist)) * calm;
           float amp = b.x * fade, st = b.y * fade;
           float ph = a.z * dot(a.xy, p.xz) - a.w * time;
           float c = cos(ph), s = sin(ph);
@@ -192,7 +199,7 @@ export function createOcean({ sky, landTexture, landBounds }) {
         float fA = texture2D(detailMap, p / 9.0 + vec2(0.01, -0.017) * time).b;
         float fB = texture2D(detailMap, p / 3.7 - vec2(0.02, 0.012) * time).b;
         float crestFoam = smoothstep(0.5, 0.8, vCrest + fA * 0.3) * (0.3 + 0.7 * fB);
-        float shore = 1.0 - smoothstep(0.5, 9.0, land);
+        float shore = 1.0 - smoothstep(0.3, 4.5, land);
         float surf = smoothstep(0.35, 0.85, 0.5 + 0.5 * sin(land * 1.25 - time * 1.7) + fA * 0.6 - 0.3);
         float foam = clamp(crestFoam + shore * (0.35 + 0.65 * surf) * (0.5 + 0.5 * fB), 0.0, 1.0);
         vec3 foamLit = foamColor * (0.45 + 0.55 * sunColor * max(dot(N, sunDir), 0.0) * 1.6 + refl.rgb * 0.35);
@@ -215,11 +222,12 @@ export function createOcean({ sky, landTexture, landBounds }) {
   // waves that are drawn.
   const cam = new THREE.Vector2();
   const d = { x: 0, y: 0, z: 0 };
+  let calm = 1;
   function displacement(x, z, t) {
     d.x = d.y = d.z = 0;
     const dist = Math.hypot(x - cam.x, z - cam.y);
     for (const w of WAVES) {
-      const fade = 1 - THREE.MathUtils.smoothstep(dist, w.f0, w.f1);
+      const fade = (1 - THREE.MathUtils.smoothstep(dist, w.f0, w.f1)) * calm;
       if (fade <= 0) continue;
       const ph = w.k * (w.dx * x + w.dz * z) - w.w * t;
       const c = Math.cos(ph), s = Math.sin(ph);
@@ -232,6 +240,7 @@ export function createOcean({ sky, landTexture, landBounds }) {
   }
   function heightAt(x, z, t) {
     // Undo the horizontal Gerstner shift with two fixed-point steps.
+    calm = landDist ? CALM_MIN + (1 - CALM_MIN) * THREE.MathUtils.smoothstep(landDist(x, z), CALM_D0, CALM_D1) : 1;
     let px = x, pz = z;
     for (let i = 0; i < 2; i++) {
       displacement(px, pz, t);

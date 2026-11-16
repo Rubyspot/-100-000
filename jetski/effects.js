@@ -38,8 +38,11 @@ export function createWake(scene, ocean) {
   mesh.frustumCulled = false;
   scene.add(mesh);
   let acc = 0, fresh = true;
+  const baseFoam = mat.uniforms.foamColor.value.clone(), gold = new THREE.Color(0xffc23a);
   return {
     reset() { fresh = true; },
+    // 0..1: tint the wake gold (boost).
+    setTint(k) { mat.uniforms.foamColor.value.copy(baseFoam).lerp(gold, k * 0.75); },
     // wet: 0..1, how much of the hull is in the water
     update(dt, t, x, z, yaw, speed, wet) {
       if (fresh) {
@@ -147,6 +150,48 @@ export function createSpray(scene, sunColor) {
       geo.attributes.position.needsUpdate = true;
       geo.attributes.life.needsUpdate = true;
       geo.attributes.size.needsUpdate = true;
+    },
+  };
+}
+
+// Speed streaks: short bright lines that rush past close to the rider at
+// speed and while boosting. Lives in the rider's (holder) space.
+export function createStreaks(parent) {
+  const N = 70;
+  const pos = new Float32Array(N * 6), col = new Float32Array(N * 6);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+  const mat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, toneMapped: false });
+  const lines = new THREE.LineSegments(geo, mat);
+  lines.frustumCulled = false;
+  parent.add(lines);
+  const p = Array.from({ length: N }, () => ({ x: 0, y: 0, z: 99, live: false }));
+  const spawn = (s) => {
+    const a = Math.random() * Math.PI * 2, r = 1.6 + Math.random() * 3.5;
+    s.x = Math.cos(a) * r; s.y = 1.5 + Math.sin(a) * r * 0.6; s.z = -25 - Math.random() * 20; s.live = true;
+  };
+  return {
+    // speed m/s, boost 0..1, gold 0..1 (Hype colour)
+    update(dt, speed, boost) {
+      const level = Math.max(0, (speed - 13) / 10) * 0.5 + boost;
+      const want = Math.min(N, Math.floor(level * N));
+      const v = speed * (1.2 + boost * 0.8);
+      for (let i = 0; i < N; i++) {
+        const s = p[i];
+        if (!s.live) { if (i < want && Math.random() < dt * 6) spawn(s); else { pos.fill(0, i * 6, i * 6 + 6); continue; } }
+        s.z += v * dt;
+        if (s.z > 3) { s.live = false; continue; }
+        const len = 0.6 + v * 0.06;
+        pos[i * 6] = s.x; pos[i * 6 + 1] = s.y; pos[i * 6 + 2] = s.z;
+        pos[i * 6 + 3] = s.x; pos[i * 6 + 4] = s.y; pos[i * 6 + 5] = s.z - len;
+        const fade = Math.min(1, (s.z + 45) / 15) * Math.min(1, (3 - s.z) / 4) * Math.min(1, level);
+        const r = 0.5 + 0.5 * boost, g = 0.5 + 0.3 * boost, b = 0.55 - 0.3 * boost;
+        col.set([r * fade, g * fade, b * fade, 0, 0, 0], i * 6);
+      }
+      lines.visible = want > 0 || p.some((s) => s.live);
+      geo.attributes.position.needsUpdate = true;
+      geo.attributes.color.needsUpdate = true;
     },
   };
 }
