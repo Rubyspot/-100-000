@@ -6,8 +6,8 @@
 // copies of pose 1; drop more files in with ?urls=.
 //
 // URL options (all optional):
-//   ?q=315k | 315k-sh0 | 200k | 150k | 75k   Jane file (default 200k; 315k is the original upload)
-//   ?roomq=400k | 900k                room scan file (default 400k)
+//   ?q=315k | 315k-sh0 | 200k | 150k | 75k   Jane file (default 150k; 315k is the original upload)
+//   ?roomq=200k | 300k | 400k | 900k  room scan file (default 300k)
 //   ?mode=preload | stream            preload: every pose decoded up front, a swap is a visibility flip
 //                                     stream: each swap decodes the next file, then flips
 //   ?poses=3                          how many poses to cycle (preload keeps them all in memory)
@@ -37,6 +37,7 @@ const SURF_QUALITIES = {
   '500k': { url: '../assets/jane/surf-500k.sog', count: 500000, note: 'no SH' },
   '300k': { url: '../assets/jane/surf-300k.sog', count: 300000, note: 'no SH' },
   '200k': { url: '../assets/jane/surf-200k.sog', count: 200000, note: 'no SH' },
+  '150k': { url: '../assets/jane/surf-150k.sog', count: 150000, note: 'no SH' },
   '100k': { url: '../assets/jane/surf-100k.sog', count: 100000, note: 'no SH' },
 };
 const POSE_QUALITIES = {
@@ -47,7 +48,9 @@ const POSE_QUALITIES = {
   '75k': { url: '../assets/jane/jane-75k.sog', count: 75000, note: 'no SH' },
 };
 const QUALITIES = SET === 'surf' ? SURF_QUALITIES : POSE_QUALITIES;
-const Q = QUALITIES[params.get('q')] ? params.get('q') : (SET === 'surf' ? '300k' : '200k');
+// Defaults are Ilia's Quest picks (Nov 16): Jane 150k, room 300k, budget 500k,
+// resolution 0.8, fast preset with room LoD 1, foveation 1.
+const Q = QUALITIES[params.get('q')] ? params.get('q') : '150k';
 const MODE = params.get('mode') === 'stream' ? 'stream' : 'preload';
 const EVERY = Math.max(1, Number(params.get('every')) || 5);
 const FADE = Math.max(0, Number(params.get('fade')) || 0);
@@ -59,10 +62,11 @@ const USE_LOD = params.get('lod') !== '0';
 // are decimated from the 4.4M scan.
 const ROOMS = {
   '200k': { url: '../assets/room-200k.sog', count: 200000 },
+  '300k': { url: '../assets/room-300k.sog', count: 300000 },
   '400k': { url: '../assets/room-400k.sog', count: 400000 },
   '900k': { url: '../assets/room.sog', count: 900000 },
 };
-const ROOMQ = ROOMS[params.get('roomq')] ? params.get('roomq') : '400k';
+const ROOMQ = ROOMS[params.get('roomq')] ? params.get('roomq') : '300k';
 const ROOM_COUNT = ROOMS[ROOMQ].count;
 // Performance knobs. Spark's LoD keeps LoD meshes under a splat budget,
 // 500k by default on Quest; ?budget=250 sets it in thousands. ?janelod=1 puts
@@ -76,19 +80,23 @@ const ROOM_COUNT = ROOMS[ROOMQ].count;
 //   ?minalpha=2  skip fragments fainter than this /255 [0.5]
 //   ?cone=0.3 ?behind=0.1   LoD detail at the edge of view / behind you [0.4 / 0.2]
 //   ?ffr=1       Quest fixed foveated rendering, 0 (off) to 1 (strongest) [1]
-//   ?preset=fast sets budget 300, stddev 2.4, lodpx 2, sortms 33, clip 1.2, minpx 0.5, maxpx 256,
-//                cone 0.3, behind 0.1; any knob given in the URL still wins.
+//   ?preset=fast (default; ?preset=off for Spark's own values) sets stddev 2.4, sortms 33, clip 1.2,
+//                minpx 0.5, maxpx 256, cone 0.3, behind 0.1 (and budget 300 / lodpx 2, but Ilia's picks
+//                below keep budget 500 and lodpx 1 unless the URL says otherwise).
 const IS_QUEST = /OculusBrowser|Quest/i.test(navigator.userAgent);
-const PRESET = params.get('preset') === 'fast' ? 'fast' : 'off';
+const PRESET = params.get('preset') === 'off' ? 'off' : 'fast';
+// Ilia's picks win over the preset; anything in the URL wins over both.
+const PICKS = { budget: 500, lodpx: 1, ffr: 1 };
 const FAST = { budget: 300, stddev: 2.4, lodpx: 2, sortms: 33, clip: 1.2, minpx: 0.5, maxpx: 256, cone: 0.3, behind: 0.1 };
 function knob(name, def) {
   const v = params.get(name);
   if (v !== null && v !== '' && Number.isFinite(Number(v))) return Number(v);
+  if (name in PICKS) return PICKS[name];
   return PRESET === 'fast' && name in FAST ? FAST[name] : def;
 }
 const BUDGET = knob('budget', 0) ? knob('budget', 0) * 1000 : (IS_QUEST ? 500000 : 2500000);
 const JANE_LOD = params.get('janelod') === '1';
-const FB = Math.min(1.5, Math.max(0.3, Number(params.get('fb')) || 1));
+const FB = Math.min(1.5, Math.max(0.3, Number(params.get('fb')) || 0.8));
 const STDDEV = knob('stddev', 0);
 const LODPX = knob('lodpx', 1);
 const SORTMS = knob('sortms', 0);
@@ -149,7 +157,7 @@ if (SET === 'surf') {
 }
 
 // Option chips on the start card are plain links that reload with new params.
-const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '2', '3', '8'], roomq: Object.keys(ROOMS), budget: ['150', '250', '350', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'], preset: ['off', 'fast'], stddev: ['2.83', '2.4', '2'], lodpx: ['1', '2', '3'], ffr: ['1', '0.5', '0'] };
+const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: ['1', '2', '3', '8'], roomq: Object.keys(ROOMS), budget: ['150', '250', '300', '400', '500'], fb: ['1', '0.8', '0.6'], janelod: ['0', '1'], preset: ['off', 'fast'], stddev: ['2.83', '2.6', '2.4', '2.2', '2', '1.8', '1.6'], lodpx: ['1', '2', '3'], ffr: ['1', '0.5', '0'] };
 const CURRENT = { roomq: ROOMQ, q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0', preset: PRESET, stddev: STDDEV ? String(STDDEV) : '2.83', lodpx: String(LODPX), ffr: String(FFR) };
 for (const box of document.querySelectorAll('.opts')) {
   const key = box.dataset.param;
