@@ -1,13 +1,16 @@
 // $100,000 opening.
-// Mixed reality: "Seagulls Love Too" starts, a $100 bill falls from the
-// ceiling, a seagull flies out of a portal standing in the room's entrance,
-// grabs it and flies back in, then the player flies through the portal into
-// the room scan. Jane forms out of particles there, stays 10 s, turns into her
-// second scan, and the play ball starts the 180 video.
+// Mixed reality: "Seagulls Love Too" starts, a portal opens in the room's
+// entrance, a seagull comes out and lands on top of its rim. A $100 bill
+// flutters down from the ceiling, the gull snatches it out of the air and
+// flies back in, and the player flies through the portal into the room scan.
+// Jane forms out of particles there, stays 10 s, turns into her second scan,
+// and the play ball starts the 180 video, with palm-sized controls (back 10 s,
+// pause, close) within reach while it plays.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { Video180 } from './video.js';
+import { VideoControls } from './video-controls.js';
 import { GullVoice } from './audio.js';
 import { createJane } from './jane/jane.js';
 import { createSplatJane } from './jane/splat-jane.js';
@@ -359,12 +362,57 @@ const billReady = gltfLoader.loadAsync('./assets/seagull/bill.glb').then((gltf) 
 // The model faces +Z, so Object3D.lookAt points the beak along the flight path.
 const GULL_SIZE = 0.68; // the model spans 1.77 m wing to wing; 1.2 m suits a room
 const gull = new THREE.Group();
-gull.userData = { materials: [], beakTip: new THREE.Object3D(), jaw: null, mixer: null, fly: null, glide: null, phase: 0 };
+gull.userData = { materials: [], beakTip: new THREE.Object3D(), jaw: null, head: null, mixer: null, fly: null, glide: null, phase: 0 };
 anchor.add(gull);
+
+// The model only has flying animations, so its sitting pose is made here: the
+// rest pose (standing on its legs, wings spread) with each wing folded in a Z,
+// upper arm back, forearm down and forward, hand back along the body so the
+// primaries lie over the tail. Works on the rest pose before the model joins
+// the scene, so its own frame is the world frame. Returns [bone, quaternion].
+function foldWings(model) {
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  const bone = (n) => model.getObjectByName(`Seagull_${n}_bone`);
+  const chain = [];
+  for (const [s, side] of [[1, 'l'], [-1, 'r']]) {
+    chain.push(
+      [bone(`${side}_Humerus`), V(s * 0.08, -0.3, -1), V(-s, 0.2, 0), s],
+      [bone(`${side}_Ulna`), V(0, -0.95, 0.3), V(s, 0, 0), s],
+      [bone(`${side}_Aula`), V(s * 0.04, 0.06, -1), V(0, 1, 0), s],
+    );
+  }
+  model.updateMatrixWorld(true);
+  const rest = chain.map(([b]) => b.quaternion.clone());
+  // In the rest pose each wing bone runs straight out along x, upper side up.
+  const axes = chain.map(([b, , , s]) => {
+    const inv = b.getWorldQuaternion(new THREE.Quaternion()).invert();
+    return [V(s, 0, 0).applyQuaternion(inv), V(0, 1, 0).applyQuaternion(inv)];
+  });
+  chain.forEach(([b, L, N], i) => {
+    const q = b.getWorldQuaternion(new THREE.Quaternion());
+    const l0 = axes[i][0].clone().applyQuaternion(q).normalize();
+    const n0 = axes[i][1].clone().applyQuaternion(q);
+    n0.addScaledVector(l0, -n0.dot(l0)).normalize();
+    const l1 = L.clone().normalize();
+    const n1 = N.clone().addScaledVector(l1, -N.dot(l1)).normalize();
+    const m0 = new THREE.Matrix4().makeBasis(l0, n0, l0.clone().cross(n0));
+    const m1 = new THREE.Matrix4().makeBasis(l1, n1, l1.clone().cross(n1));
+    const turn = new THREE.Quaternion().setFromRotationMatrix(m1.multiply(m0.transpose()));
+    const parentInv = b.parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+    b.quaternion.copy(parentInv.multiply(turn.multiply(q)));
+    b.updateMatrixWorld(true);
+  });
+  const fold = chain.map(([b]) => [b, b.quaternion.clone()]);
+  chain.forEach(([b], i) => b.quaternion.copy(rest[i]));
+  model.updateMatrixWorld(true);
+  return fold;
+}
+
 const gullReady = gltfLoader.loadAsync('./assets/seagull/seagull.glb').then((gltf) => {
   const u = gull.userData;
   const model = gltf.scene;
   model.scale.setScalar(GULL_SIZE);
+  u.fold = foldWings(model);
   gull.add(model);
   let skinned = null;
   model.traverse((o) => {
@@ -384,16 +432,35 @@ const gullReady = gltfLoader.loadAsync('./assets/seagull/seagull.glb').then((glt
   u.beakTip.position.copy(beak.worldToLocal(tip));
   beak.add(u.beakTip);
   u.jaw = model.getObjectByName('Seagull_Mandible_bone');
-  u.jawRest = u.jaw.quaternion.clone();
-  const fly = THREE.AnimationClip.findByName(gltf.animations, 'fly');
-  u.jawTracked = fly.tracks.some((t) => t.name === 'Seagull_Mandible_bone.quaternion');
+  u.head = model.getObjectByName('Seagull_Head_bone');
+  // Bones the code turns on top of the animation (folded wings, head, jaw).
+  // The mixer only writes a bone when its animated value changes, so these
+  // are put back to the animation's own pose before every update.
+  u.animQ = new Map([...u.fold.map(([b]) => b), u.head, u.jaw].map((b) => [b, b.quaternion.clone()]));
   u.mixer = new THREE.AnimationMixer(model);
-  u.fly = u.mixer.clipAction(fly);
+  u.fly = u.mixer.clipAction(THREE.AnimationClip.findByName(gltf.animations, 'fly'));
   u.glide = u.mixer.clipAction(THREE.AnimationClip.findByName(gltf.animations, 'glide'));
   u.fly.play();
   u.glide.play();
-  flap(0, 1);
-  // Where the beak tip sits in the gull's own frame, mid wing beat.
+  // Where its feet are when it sits, in its own frame.
+  poseGull(0, 0, BEAT, 1, false);
+  gull.updateMatrixWorld(true);
+  const toes = ['l', 'r'].map((side) => model.getObjectByName(`Seagull_${side}_Toe_bone`).getWorldPosition(new THREE.Vector3()));
+  u.feet = gull.worldToLocal(toes[0].add(toes[1]).multiplyScalar(0.5));
+  u.feet.y -= 0.004; // the toe joint sits just above the sole
+  const pelvis = model.getObjectByName('Seagull_Pelvis_bone');
+  u.bodyRest = gull.worldToLocal(pelvis.getWorldPosition(new THREE.Vector3()));
+  // Its body in flight, averaged over a wing beat.
+  u.bodyFly = new THREE.Vector3();
+  for (let i = 0; i < 8; i++) {
+    poseGull(1 / 8 / BEAT, 1, BEAT, 0, false);
+    gull.updateMatrixWorld(true);
+    u.bodyFly.add(gull.worldToLocal(pelvis.getWorldPosition(new THREE.Vector3())));
+  }
+  u.bodyFly.divideScalar(8);
+  // Where the beak tip sits in its own frame, mid wing beat.
+  u.phase = 0;
+  poseGull(0, 1, BEAT, 0, false);
   gull.updateMatrixWorld(true);
   u.tipLocal = gull.worldToLocal(u.beakTip.getWorldPosition(new THREE.Vector3()));
   setObjectMasked(false);
@@ -403,19 +470,42 @@ const gullVoice = new GullVoice(listener, gull);
 // Wing beats per second; the clip's own pace is 2.5.
 const BEAT = 2.2, BEAT_HOVER = 2.8;
 const JAW_SIGN = -1; // which way round the mandible bone opens the beak
-// strength 1 = full wing beats, 0 = gliding with the wings level.
-function flap(dt, strength, beat = BEAT) {
+// strength: 1 full wing beats, 0 gliding with the wings level.
+// perch: 1 sitting (standing legs, folded wings), blending in from flight.
+// sound: whoosh on each downstroke.
+function poseGull(dt, strength, beat = BEAT, perch = 0, sound = true) {
   const u = gull.userData;
   if (!u.mixer) return;
+  for (const [b, q] of u.animQ) b.quaternion.copy(q);
+  const w = clamp01(perch), s = clamp01(strength);
   const before = Math.floor(u.phase - 0.05);
-  u.phase += dt * beat;
+  u.phase += dt * beat * (1 - w);
   // One whoosh per downstroke (the beat starts with the wings up).
-  if (Math.floor(u.phase - 0.05) !== before && strength > 0.3) gullVoice.flap(strength);
-  const s = Math.min(1, Math.max(0, strength));
-  u.fly.setEffectiveWeight(s);
-  u.glide.setEffectiveWeight(1 - s);
+  if (sound && Math.floor(u.phase - 0.05) !== before && s > 0.3 && w < 0.5) gullVoice.flap(s);
+  // Whatever weight flight doesn't take goes to the rest pose (standing).
+  u.fly.setEffectiveWeight(s * (1 - w));
+  u.glide.setEffectiveWeight((1 - s) * (1 - w));
   u.fly.time = (u.phase % 1) * u.fly.getClip().duration;
   u.mixer.update(0);
+  for (const [b, q] of u.animQ) q.copy(b.quaternion);
+  if (w > 0) for (const [b, q] of u.fold) b.quaternion.slerp(q, w);
+}
+
+// Turn the head on top of the pose so the beak points at `target` (world
+// position), by at most 75 degrees, `weight` of the way.
+function aimHead(target, weight) {
+  const u = gull.userData;
+  if (!u.head || weight <= 0) return;
+  gull.updateMatrixWorld(true);
+  const hp = u.head.getWorldPosition(new THREE.Vector3());
+  const cur = u.beakTip.getWorldPosition(new THREE.Vector3()).sub(hp).normalize();
+  const want = target.clone().sub(hp).normalize();
+  const turn = new THREE.Quaternion().setFromUnitVectors(cur, want);
+  const angle = 2 * Math.acos(Math.min(1, Math.abs(turn.w)));
+  const part = new THREE.Quaternion().slerp(turn, weight * Math.min(1, THREE.MathUtils.degToRad(75) / Math.max(angle, 1e-6)));
+  const hq = u.head.getWorldQuaternion(new THREE.Quaternion());
+  const parentInv = u.head.parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+  u.head.quaternion.copy(parentInv.multiply(part.multiply(hq)));
 }
 
 // Bill and gull go behind the stencil while they are on the world side of the portal.
@@ -469,6 +559,25 @@ function updateHands(frame) {
   handMesh.instanceMatrix.needsUpdate = true;
 }
 
+// Controller rays, drawn only while they point at the video controls.
+const pointers = [0, 1].map((i) => {
+  const c = renderer.xr.getController(i);
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]),
+    new THREE.LineBasicMaterial({ color: 0xf2c45a, transparent: true, opacity: 0.85 }),
+  );
+  line.visible = false;
+  c.add(line);
+  c.addEventListener('connected', (e) => { c.userData.source = e.data; });
+  c.addEventListener('disconnected', () => { c.userData.source = null; line.visible = false; });
+  rig.add(c);
+  return { c, line };
+});
+const rayOf = (obj) => {
+  const m = obj.matrixWorld;
+  return new THREE.Ray(new THREE.Vector3().setFromMatrixPosition(m), new THREE.Vector3(0, 0, -1).transformDirection(m));
+};
+
 // ---------- in-headset text (replay hint, debug fps) ----------
 
 function makeLabel(width = 512, height = 128) {
@@ -493,6 +602,13 @@ function makeLabel(width = 512, height = 128) {
 
 const video = new Video180({ renderer, scene, src: VIDEO_SRC });
 video.ready.catch((err) => console.warn('Video not available:', err.message || err));
+// Back 10 s, pause / play and close, within reach while the video plays.
+const videoControls = new VideoControls({
+  scene, listener,
+  onBack: () => video.seekBy(-10),
+  onToggle: () => video.togglePause(),
+  onClose: () => video.stop(),
+});
 
 const playBall = new THREE.Group();
 {
@@ -544,9 +660,11 @@ function startVideo() {
   const pose = new THREE.Object3D();
   pose.position.setFromMatrixPosition(head.matrixWorld);
   pose.quaternion.copy(anchor.quaternion);
+  gullVoice.setLevel(0, 0.2);
   setTimeout(() => {
     worldRoot.visible = spark.visible = false;
     playBall.visible = false;
+    videoControls.show(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera, renderer.xr.isPresenting);
     window.dispatchEvent(new Event('scene:video-start'));
     video.play(pose, rig).catch((err) => {
       console.warn('Video failed:', err);
@@ -556,6 +674,7 @@ function startVideo() {
   }, 450);
 }
 video.onEnded = () => {
+  videoControls.hide();
   worldRoot.visible = spark.visible = true;
   playBall.visible = sceneApi.autoPlayBall;
   playBall.userData.pressedAt = -1;
@@ -604,15 +723,17 @@ camera.add(fpsLabel);
 
 // ---------- timeline ----------
 
-const T_BILL = 0.6;        // bill appears at the ceiling and flutters to the floor
-const T_PORTAL = 1.2;      // portal opens
-const T_GULL_OUT = 2.6;    // gull flies out of the portal
-const T_HOVER = 5.8;       // gull hovers in front of the viewer and looks at them
-const T_CALLS = [6.5, 8.0]; // gull yells
-const T_SWOOP = 9.4;       // gull dives for the bill on the floor
-const T_GRAB = 10.6;       // gull picks it up
-const T_GULL_IN = 12.4;    // gull is back through the portal
-const T_GLIDE = 11.8;      // player starts flying through the portal
+const T_PORTAL = 0.6;      // portal opens
+const T_GULL_OUT = 1.3;    // gull comes out through the portal...
+const T_PERCH = 2.8;       // ...and lands on top of its rim, facing the viewer
+const T_CALLS = [3.25];    // and yells at them
+const T_BILL = 3.5;        // a $100 bill appears at the ceiling and flutters down past the gull
+const BILL_FALL = 0.42;    // m/s
+const BILL_DROP = 0.85;    // m it falls before the gull catches it, about the portal's centre height
+const T_GRAB = T_BILL + BILL_DROP / BILL_FALL; // the gull snatches it out of the air (~5.5 s)
+const T_SWOOP = T_GRAB - 0.6;     // gull drops off the rim for it
+const T_GULL_GONE = T_GRAB + 2.6; // gull is through the portal and out of sight
+const T_GLIDE = T_GRAB + 0.9;     // player starts flying through the portal
 
 // Flight: constant speed with soft raised-cosine ramps at both ends, so it
 // starts and stops without a jolt.
@@ -622,11 +743,11 @@ const T_ARRIVE = T_GLIDE + GLIDE_DUR;
 const T_HINT = T_ARRIVE + 1.0; // play ball appears
 
 const PORTAL_Z = -PORTAL_DIST, PORTAL_R = 0.55, PORTAL_END_R = 1.3;
-const BILL_FALL = 0.42; // m/s
 
 const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const easeOutBack = (x) => 1 + 2.2 * Math.pow(x - 1, 3) + 1.2 * Math.pow(x - 1, 2);
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const smooth01 = (x) => { const u = clamp01(x); return u * u * (3 - 2 * u); };
 
 const state = { running: false, start: 0, eye: 1.6, inside: false, arrived: false, calls: 0 };
 const clock = { now: 0, last: 0, frames: 0, fpsT: 0 };
@@ -641,21 +762,16 @@ function flightDistance(t) {
   return (v * RAMP) / 2 + v * (x - RAMP);
 }
 
-const BILL_LAND_T = (2.35 - 0.006) / BILL_FALL;
 function billPose(tb, out) {
-  // Fluttering fall, drifting side to side, then lying flat on the floor.
-  const k = Math.min(tb, BILL_LAND_T);
+  // Flutters down from the ceiling in front of the portal, drifting side to
+  // side, until the gull catches it (it never reaches the floor).
+  const top = state.eye + BILL_DROP - 0.1;
   out.position.set(
-    0.24 + 0.12 * Math.sin(k * 2.2),
-    Math.max(0.006, 2.35 - BILL_FALL * k),
-    -0.8 + 0.06 * Math.sin(k * 1.7),
+    0.26 + 0.1 * Math.sin(tb * 2.2),
+    Math.max(0.006, top - BILL_FALL * tb),
+    -0.8 + 0.05 * Math.sin(tb * 1.7),
   );
-  const settle = clamp01((tb - BILL_LAND_T + 0.5) / 0.5);
-  out.rotation.set(
-    THREE.MathUtils.lerp(0.6 * Math.sin(k * 2.2 + 1.0), -Math.PI / 2, settle),
-    0.45 * k,
-    THREE.MathUtils.lerp(0.9 * Math.sin(k * 2.2), 0, settle),
-  );
+  out.rotation.set(0.6 * Math.sin(tb * 2.2 + 1.0), 0.45 * tb, 0.9 * Math.sin(tb * 2.2));
 }
 const scratchBill = new THREE.Object3D();
 function billPositionAt(tb) { billPose(tb, scratchBill); return scratchBill.position.clone(); }
@@ -671,12 +787,31 @@ function portalPoseAt(t, fly) {
   };
 }
 
+// Gull paths, through the gull's body (anchor space).
 const gullOutCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
-const gullDiveCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
+const gullSwoopCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
 const gullInCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
-const hoverPoint = new THREE.Vector3();
-let grabPoint = new THREE.Vector3();
-const DIVE_END = new THREE.Vector3(0.05, -0.05, -0.3); // look direction at the grab
+// Where it catches the bill it's flying right and a little toward the viewer.
+const SWOOP_END = new THREE.Vector3(0.85, -0.35, 0.4).normalize();
+const ZERO = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+const tmpM = new THREE.Matrix4();
+// Rotation (anchor space) that turns the gull's beak along `dir`.
+const facing = (dir, out = new THREE.Quaternion()) => out.setFromRotationMatrix(tmpM.lookAt(dir, ZERO, UP));
+// Put the gull's body at `body` (anchor space). The body sits lower in the
+// model when it stands than when it flies, so shift by the blend of the two.
+function placeGull(body, quat, perch) {
+  const u = gull.userData;
+  gull.quaternion.copy(quat);
+  const off = new THREE.Vector3().lerpVectors(u.bodyFly, u.bodyRest, clamp01(perch)).applyQuaternion(quat);
+  gull.position.copy(body).sub(off);
+}
+// The top of the portal's rim, where the gull sits (anchor space).
+const perchPoint = (pp) => new THREE.Vector3(0, pp.y + pp.r + 0.003, pp.z);
+// Its body when it sits there turned by `quat`.
+function perchBody(pp, quat) {
+  const u = gull.userData;
+  return perchPoint(pp).add(u.bodyRest.clone().sub(u.feet).applyQuaternion(quat));
+}
 
 function startSequence() {
   // Anchor everything to the current head pose, yaw only.
@@ -694,42 +829,40 @@ function startSequence() {
   state.eye = THREE.MathUtils.clamp(headPos.y, 1.0, 1.9);
 
   const pz = PORTAL_Z, py = state.eye - 0.08;
-  hoverPoint.set(-0.18, state.eye - 0.02, -0.72);
-  // Dive so the beak tip, not the body, ends at the bill: the gull finishes
-  // the dive looking along DIVE_END, so back off by its beak offset that way.
-  grabPoint = billPositionAt(T_GRAB - T_BILL).add(new THREE.Vector3(0, 0.03, 0));
-  if (gull.userData.tipLocal) {
-    const o = new THREE.Object3D();
-    o.lookAt(DIVE_END);
-    grabPoint.sub(gull.userData.tipLocal.clone().applyQuaternion(o.quaternion));
-  }
-  // Out of the portal, a wide loop to the left and over the top, then in to
-  // hover facing the viewer, never closer than ~0.6 m to the head.
+  const u = gull.userData;
+  // Sitting on top of the open portal, facing the viewer (the anchor's +Z).
+  const sit = perchBody({ y: py, r: PORTAL_R, z: pz }, new THREE.Quaternion());
+  // Out through the disk toward the viewer, up in front of the rim, and a
+  // flare back down onto its top.
   gullOutCurve.points = [
-    new THREE.Vector3(0.05, py, pz - 0.6),
-    new THREE.Vector3(0.0, py + 0.1, pz + 0.15),
-    new THREE.Vector3(-0.7, py + 0.35, -1.0),
-    new THREE.Vector3(-0.9, py + 0.8, -1.6),
-    new THREE.Vector3(0.1, py + 0.95, -1.9),
-    new THREE.Vector3(0.75, py + 0.6, -1.3),
-    new THREE.Vector3(0.35, py + 0.25, -0.95),
-    hoverPoint.clone(),
+    new THREE.Vector3(0.06, py - 0.04, pz - 0.65),
+    new THREE.Vector3(0.02, py + 0.03, pz + 0.16),
+    new THREE.Vector3(0.14, sit.y - 0.05, pz + 0.27),
+    new THREE.Vector3(0.05, sit.y + 0.13, pz + 0.12),
+    sit.clone(),
   ];
-  gullDiveCurve.points = [
-    hoverPoint.clone(),
-    new THREE.Vector3(hoverPoint.x - 0.05, hoverPoint.y + 0.15, hoverPoint.z - 0.35),
-    new THREE.Vector3(grabPoint.x - 0.1, grabPoint.y + 0.5, grabPoint.z - 0.35),
-    new THREE.Vector3(grabPoint.x - 0.02, grabPoint.y + 0.1, grabPoint.z - 0.12),
-    grabPoint.clone(),
+  // Catch: the beak tip meets the falling bill while the gull flies along
+  // SWOOP_END, so its body is that far back from the bill.
+  const billAt = billPositionAt(T_GRAB - T_BILL);
+  const grabBody = billAt.clone().sub(u.tipLocal.clone().sub(u.bodyFly).applyQuaternion(facing(SWOOP_END)));
+  gullSwoopCurve.points = [
+    sit.clone(),
+    sit.clone().add(new THREE.Vector3(0.02, 0.05, 0.12)),
+    grabBody.clone().add(new THREE.Vector3(-0.1, 0.18, -0.03)),
+    grabBody.clone(),
   ];
+  // Off with it: on to the right, a turn back, and in through the disk.
   gullInCurve.points = [
-    grabPoint.clone(),
-    new THREE.Vector3(grabPoint.x - 0.05, grabPoint.y + 0.35, grabPoint.z - 0.25),
-    new THREE.Vector3(0.05, py + 0.05, pz + 0.3),
-    new THREE.Vector3(0, py, pz - 0.4),
-    new THREE.Vector3(-0.4, py + 0.6, pz - 2.4),
-    new THREE.Vector3(-0.8, py + 1.3, pz - 4.4),
+    grabBody.clone(),
+    grabBody.clone().add(new THREE.Vector3(0.16, 0.08, 0.12)),
+    new THREE.Vector3(0.32, py + 0.2, pz + 0.18),
+    new THREE.Vector3(0.1, py + 0.08, pz - 0.35),
+    new THREE.Vector3(-0.3, py + 0.45, pz - 2.2),
+    new THREE.Vector3(-0.65, py + 1.0, pz - 4.0),
   ];
+  state.gullAway = false;
+  gullVoice.setLevel(1);
+  videoControls.hide();
 
   state.start = clock.now;
   state.running = true;
@@ -797,67 +930,81 @@ function update(t, dt) {
   fakeRoom.visible = !renderer.xr.isPresenting && !state.inside;
   handMesh.visible = state.inside;
 
-  // Bill: flutters down and lands on the floor until the gull picks it up.
+  // Bill: flutters down from the ceiling until the gull catches it.
   if (T >= T_BILL && T < T_GRAB) {
     bill.visible = true;
     billPose(T - T_BILL, bill);
   }
 
   // Gull.
-  let jawOpen = 0;
-  if (T >= T_GULL_OUT && gull.userData.mixer) {
+  const gu = gull.userData;
+  if (T >= T_GULL_OUT && T < T_GULL_GONE && gu.mixer) {
     gull.visible = true;
-    let pos, look = null, ahead = null;
-    if (T < T_HOVER) {
-      // Out of the portal and around in a loop.
-      const u = easeInOut(clamp01((T - T_GULL_OUT) / (T_HOVER - T_GULL_OUT)));
-      pos = gullOutCurve.getPointAt(u, v1);
-      ahead = gullOutCurve.getPointAt(Math.min(1, u + 0.02), v2);
-      if (u > 0.97) look = camWorld;
-      gull.scale.setScalar(clamp01((T - T_GULL_OUT) / 0.4 + 0.3));
-      flap(dt, u > 0.85 ? 0.7 : 1);
+    gull.scale.setScalar(1);
+    let jawOpen = 0, look = null, lookW = 0;
+    const toViewer = (from) => facing(v2.set(camLocal.x - from.x, 0, camLocal.z - from.z));
+    if (T < T_PERCH) {
+      // Out through the portal and a flare back onto the top of its rim,
+      // turning to face the viewer as it lands.
+      const k = clamp01((T - T_GULL_OUT) / (T_PERCH - T_GULL_OUT));
+      const u = 1 - (1 - k) * (1 - k);
+      const body = gullOutCurve.getPointAt(u, v1);
+      const q = facing(gullOutCurve.getTangentAt(Math.min(0.999, u), v2));
+      const turn = smooth01((k - 0.5) / 0.4);
+      const sit = smooth01((k - 0.72) / 0.28);
+      q.slerp(toViewer(body), turn);
+      poseGull(dt, 1, THREE.MathUtils.lerp(BEAT, BEAT_HOVER, clamp01((k - 0.45) / 0.3)), sit);
+      placeGull(body, q, sit);
+      setObjectMasked(!state.inside && body.z < pp.z);
     } else if (T < T_SWOOP) {
-      // Hover, face the viewer, yell.
-      const h = T - T_HOVER;
-      pos = v1.copy(hoverPoint).add(v2.set(0.02 * Math.sin(h * 1.3), 0.03 * Math.sin(h * 2.1), 0.015 * Math.sin(h * 0.9)));
-      look = camWorld;
-      flap(dt, 0.85, BEAT_HOVER);
+      // Sitting on the rim: looks at the viewer, yells, then watches the bill fall.
+      const q = toViewer(perchPoint(pp));
+      poseGull(dt, 0, BEAT, 1);
+      placeGull(perchBody(pp, q), q, 1);
+      setObjectMasked(false);
       if (state.calls < T_CALLS.length && T >= T_CALLS[state.calls]) gullVoice.call(state.calls++);
       for (const tc of T_CALLS) {
         const c = (T - tc) / 0.6;
         if (c > 0 && c < 1) jawOpen = 0.45 * Math.sin(Math.PI * Math.min(1, c * 1.6)) * (0.8 + 0.2 * Math.sin(T * 40));
       }
-      // Glance down at the bill before diving.
-      if (T > T_SWOOP - 0.8) look = anchor.localToWorld(billPositionAt(T - T_BILL));
+      const watchBill = smooth01((T - T_BILL - 0.3) / 0.5);
+      look = camWorld.clone().lerp(anchor.localToWorld(billPositionAt(Math.max(0, T - T_BILL))), watchBill);
+      lookW = smooth01((T - T_PERCH) / 0.4);
     } else if (T < T_GRAB) {
-      const u = easeInOut(clamp01((T - T_SWOOP) / (T_GRAB - T_SWOOP)));
-      pos = gullDiveCurve.getPointAt(u, v1);
-      ahead = gullDiveCurve.getPointAt(Math.min(1, u + 0.03), v2);
-      if (u > 0.95) ahead.copy(pos).add(DIVE_END);
-      flap(dt, u > 0.7 ? 1 : 0.4);
+      // Drops off the rim and snatches the bill out of the air.
+      const k = clamp01((T - T_SWOOP) / (T_GRAB - T_SWOOP));
+      const u = k * k * (3 - 2 * k);
+      const body = gullSwoopCurve.getPointAt(u, v1);
+      const q = facing(gullSwoopCurve.getTangentAt(Math.min(0.999, u), v2));
+      q.slerp(facing(SWOOP_END), smooth01((k - 0.6) / 0.35));
+      const sit = 1 - smooth01(k / 0.35);
+      poseGull(dt, 1, BEAT_HOVER, sit);
+      placeGull(body, q, sit);
+      look = anchor.localToWorld(billPositionAt(T - T_BILL));
+      lookW = 1 - smooth01((k - 0.5) / 0.4);
     } else {
-      // Take off with the bill and fly back through the portal into the room.
-      const u = clamp01((T - T_GRAB) / ((T_GULL_IN - T_GRAB) * 2.4));
-      const uu = u < 0.5 ? 2 * u * u : u;
-      pos = gullInCurve.getPointAt(Math.min(1, uu), v1);
-      ahead = gullInCurve.getPointAt(Math.min(1, uu + 0.02), v2);
-      if (uu >= 0.99) ahead.copy(pos).add(new THREE.Vector3(-0.2, 0.2, -1));
-      flap(dt, 1);
-      gull.visible = u < 1;
-      // Behind the portal plane, only show the gull through the disk.
-      setObjectMasked(!state.inside && pos.z < pp.z);
+      // Off through the portal with the bill; its sounds fade as it goes.
+      const k = clamp01((T - T_GRAB) / (T_GULL_GONE - T_GRAB));
+      const u = Math.min(1, k < 0.5 ? 2 * k * k : k);
+      const body = gullInCurve.getPointAt(u, v1);
+      const q = facing(gullInCurve.getTangentAt(Math.min(0.999, u), v2));
+      poseGull(dt, 1, BEAT, 0, !state.gullAway);
+      placeGull(body, q, 0);
+      const behind = !state.inside && body.z < pp.z;
+      setObjectMasked(behind);
+      if (behind && !state.gullAway) {
+        state.gullAway = true;
+        gullVoice.setLevel(0, 1.2);
+      }
     }
-    gull.position.copy(pos);
-    gull.lookAt(look ? look : anchor.localToWorld(ahead.clone()));
-    // Yell: open the lower mandible on top of the wing-beat pose.
-    const gu = gull.userData;
-    if (!gu.jawTracked) gu.jaw.quaternion.copy(gu.jawRest);
+    if (look && lookW > 0) aimHead(look, lookW);
+    // Yell: open the lower mandible on top of the pose.
     if (jawOpen) gu.jaw.rotateZ(JAW_SIGN * jawOpen);
     if (T >= T_GRAB) {
-      bill.visible = gull.visible;
+      bill.visible = true;
       gull.updateMatrixWorld(true);
-      // Held crosswise by its top edge, swinging a little; eased in from the
-      // floor over a fifth of a second so the pick-up doesn't jump.
+      // Held crosswise by its top edge, swinging a little; eased in from where
+      // it was caught over a fifth of a second so the catch doesn't jump.
       const held = anchor.worldToLocal(gu.beakTip.getWorldPosition(new THREE.Vector3()))
         .add(new THREE.Vector3(0, -0.043, 0.012).applyQuaternion(gull.quaternion));
       const heldQ = gull.quaternion.clone().multiply(
@@ -873,6 +1020,9 @@ function update(t, dt) {
         bill.quaternion.copy(heldQ);
       }
     }
+  } else if (T >= T_GULL_GONE && gull.visible) {
+    gull.visible = bill.visible = false;
+    gullVoice.setLevel(0, 0.3);
   }
 
   if (sceneApi.autoPlayBall && T > T_HINT && state.inside && !playBall.visible && !video.playing && playBall.userData.pressedAt < 0) {
@@ -945,6 +1095,24 @@ renderer.setAnimationLoop((time, frame) => {
   video.update();
   jane.update(t, dt, frame);
   if (renderer.xr.isPresenting) updateHands(frame);
+  if (videoControls.visible) {
+    const rayHits = [];
+    for (const { c, line } of pointers) {
+      const src = c.userData.source;
+      if (!renderer.xr.isPresenting || !src || src.hand || src.targetRayMode !== 'tracked-pointer') { line.visible = false; continue; }
+      const hit = videoControls.hitRay(rayOf(c));
+      line.visible = hit.near;
+      if (hit.near) line.scale.z = hit.distance;
+      rayHits.push(hit);
+    }
+    videoControls.update(t, dt, {
+      fingertips, rayHits,
+      head: renderer.xr.isPresenting ? renderer.xr.getCamera() : camera,
+      paused: video.paused, time: video.currentTime, duration: video.duration,
+    });
+  } else {
+    for (const p of pointers) p.line.visible = false;
+  }
   if (DEBUG) {
     clock.frames++;
     if (t - clock.fpsT > 0.5) {
@@ -994,10 +1162,13 @@ $('enterXr').addEventListener('click', async () => {
     session.addEventListener('select', (e) => {
       const ref = renderer.xr.getReferenceSpace();
       const pose = e.frame.getPose(e.inputSource.targetRaySpace, ref);
-      if (!pose || !playBall.visible) return;
+      if (!pose) return;
       const m = new THREE.Matrix4().fromArray(pose.transform.matrix).premultiply(rig.matrixWorld);
       const ray = new THREE.Ray(new THREE.Vector3().setFromMatrixPosition(m),
         new THREE.Vector3(0, 0, -1).transformDirection(m));
+      // Trigger or pinch while pointing at a video button presses it.
+      if (videoControls.visible) { videoControls.pressRay(ray); return; }
+      if (!playBall.visible) return;
       playBall.getWorldPosition(ballWorld);
       if (ray.distanceSqToPoint(ballWorld) < 0.2 * 0.2) startVideo();
     });
@@ -1025,14 +1196,15 @@ $('replay').addEventListener('click', () => {
   startSequence();
 });
 renderer.domElement.addEventListener('click', (e) => {
-  if (renderer.xr.isPresenting || !playBall.visible) return;
+  if (renderer.xr.isPresenting) return;
   const ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   const rc = new THREE.Raycaster();
   rc.setFromCamera(ndc, camera);
-  if (rc.intersectObject(playBall.userData.ball).length) startVideo();
+  if (videoControls.visible) { videoControls.pressRay(rc.ray); return; }
+  if (playBall.visible && rc.intersectObject(playBall.userData.ball).length) startVideo();
 });
 window.__startVideo = startVideo;
-window.__debug = { state, playBall, video, worldRoot, gull, bill, splatJane, music, spark };
+window.__debug = { state, playBall, video, worldRoot, gull, bill, splatJane, music, spark, videoControls, gullVoice };
 
 // Test hook: freeze the sequence at a given time (seconds).
 window.__setSequenceTime = (T) => { state.fixedT = T; };

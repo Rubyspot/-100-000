@@ -36,26 +36,32 @@ async function attachSegments(video, bases) {
   await appended();
 
   // Keep about BUDGET bytes buffered ahead of the playhead: the 8K master runs
-  // ~16 MB/s and browsers cap a SourceBuffer at a few hundred MB.
-  const BUDGET = 120e6, BEHIND = 3;
-  const segSec = manifest.duration / manifest.segments.length;
-  let ahead = 24, next = 0, busy = false;
+  // ~16 MB/s and browsers cap a SourceBuffer at a few hundred MB. Keep a little
+  // behind it too, more for the lighter 4K copy, so "back 10 s" is instant there.
+  const BUDGET = 120e6;
+  const n = manifest.segments.length, segSec = manifest.duration / n;
+  let ahead = 24, behind = 3, next = 0, busy = false, gen = 0;
   async function pump() {
-    if (busy || ms.readyState !== 'open') return;
+    if (busy || ms.readyState === 'closed') return;
     busy = true;
+    const g = gen;
     try {
       const end = sb.buffered.length ? sb.buffered.end(sb.buffered.length - 1) : 0;
-      if (sb.buffered.length && sb.buffered.start(0) < video.currentTime - BEHIND - 1) {
-        sb.remove(0, video.currentTime - BEHIND);
+      if (sb.buffered.length && sb.buffered.start(0) < video.currentTime - behind - 1) {
+        sb.remove(0, video.currentTime - behind);
         await appended();
       }
-      if (next < manifest.segments.length && end - video.currentTime < ahead) {
-        const bytes = await fetchBytes(manifest.segments[next]);
-        ahead = Math.max(2 * segSec, Math.min(24, BUDGET / (bytes.length / segSec)));
+      if (next < n && end - video.currentTime < ahead) {
+        const i = next;
+        const bytes = await fetchBytes(manifest.segments[i]);
+        if (g !== gen) return; // the viewer skipped while this segment was loading
+        const rate = bytes.length / segSec;
+        ahead = Math.max(2 * segSec, Math.min(24, BUDGET / rate));
+        behind = rate < 8e6 ? 12 : 3;
         try {
           sb.appendBuffer(bytes);
           await appended();
-          next++;
+          next = i + 1;
         } catch (e) {
           if (e.name !== 'QuotaExceededError') throw e;
           ahead = Math.max(2 * segSec, ahead / 2); // buffer full: retry this segment later
@@ -63,8 +69,8 @@ async function attachSegments(video, bases) {
           setTimeout(pump, 500);
           return;
         }
-      } else if (next >= manifest.segments.length) {
-        ms.endOfStream();
+      } else if (next >= n) {
+        if (ms.readyState === 'open' && !sb.updating) ms.endOfStream();
         return;
       }
     } finally {
@@ -72,8 +78,25 @@ async function attachSegments(video, bases) {
     }
     setTimeout(pump, 0);
   }
+  // A skip to a time that isn't buffered: drop what is, and load from the
+  // segment holding the new time.
+  async function onSeeking() {
+    const t = video.currentTime;
+    for (let i = 0; i < sb.buffered.length; i++) {
+      if (t >= sb.buffered.start(i) && t < sb.buffered.end(i) - 0.3) { pump(); return; }
+    }
+    const g = ++gen;
+    while (busy || sb.updating) await new Promise((r) => setTimeout(r, 25));
+    if (g !== gen) return;
+    next = Math.min(n - 1, Math.max(0, Math.floor(t / segSec)));
+    if (sb.buffered.length) {
+      sb.remove(0, Infinity);
+      await appended();
+    }
+    pump();
+  }
   video.addEventListener('timeupdate', pump);
-  video.addEventListener('seeking', pump);
+  video.addEventListener('seeking', onSeeking);
   await pump();
 }
 
@@ -184,6 +207,20 @@ export class Video180 {
     this.root.quaternion.copy(quat);
     this.root.visible = true;
     await video.play();
+  }
+
+  get paused() { return this.video.paused; }
+  get currentTime() { return this.video.currentTime || 0; }
+  get duration() { return Number.isFinite(this.video.duration) ? this.video.duration : 0; }
+  togglePause() {
+    if (!this.playing) return;
+    if (this.video.paused) this.video.play().catch(() => {});
+    else this.video.pause();
+  }
+  seekBy(seconds) {
+    if (!this.playing) return;
+    const v = this.video;
+    v.currentTime = Math.min(Math.max(0, this.duration - 0.5), Math.max(0, v.currentTime + seconds));
   }
 
   stop() {
