@@ -156,7 +156,18 @@ export function createJane(api) {
   function speak(line, then) {
     say(line);
     st.talking = true;
-    const done = () => { st.talking = false; then && then(); };
+    // Where the browser has no voice the speech ends at once: the caption
+    // still stays up long enough to read before the next line.
+    const readBy = performance.now() + 1200 + line.length * 45;
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      st.talking = false;
+      const wait = readBy - performance.now();
+      if (!then) return;
+      if (wait > 0) setTimeout(then, wait); else then();
+    };
     if (!('speechSynthesis' in window)) { setTimeout(done, 1000 + line.length * 55); return; }
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(line.replace(/\*[^*]*\*/g, ''));
@@ -170,15 +181,20 @@ export function createJane(api) {
     clearTimeout(scriptTimer);
     scriptTimer = setTimeout(() => { if (st.talking) done(); }, 2500 + line.length * 80);
   }
+  let scriptRun = 0;
   function startScripted(phase) {
     const lines = phase === 'back' ? backLines(st.result) : SCRIPTED[phase] || [];
+    const run = ++scriptRun;
     let i = 0;
     const next = () => {
+      if (run !== scriptRun) return; // a newer script has taken over
       if (st.phase !== phase || i >= lines.length) {
         if (phase === 'welcome' && st.phase === 'welcome') api.showPlayBall && api.showPlayBall(true);
         if (st.phase === phase) showJetski();
         return;
       }
+      // The jetski pops up as she starts the line that points at it (her last).
+      if (i === lines.length - 1) showJetski();
       const { text, gesture, mood } = lines[i++];
       if (gesture) avatar.gesture(gesture, st.t);
       if (mood) avatar.setMood(mood);

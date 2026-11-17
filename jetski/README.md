@@ -94,7 +94,9 @@ enclosed. Jane's engine and the gulls are positioned in space. The Crispy J play
 `window.simulate(seconds)`), `?bar=0.36,0.42`, `?riser=0.12`, `?fb=0.9` (headset resolution scale),
 `?music=0`, `?vignette=0`, `?streaks=0`, `?heave=0` (the view keeps its height), `?jane=simple` (no scan).
 
-In the opening: `?race=0` leaves the race out (the floating jetski then opens this page).
+In the opening: `?bar=`, `?riser=`, `?vignette=0`, `?streaks=0`, `?heave=0`, `?music=0`, `?debug` and
+`?autopilot` work the same way, `?aa=1` turns multisampling on for the session, and `?race=0` leaves the
+race out (the floating jetski then opens this page).
 
 ## Testing without a headset
 
