@@ -1,9 +1,9 @@
 # $100,000 – opening
 
 WebXR opening of the "$100,000" experience: mixed reality, "Seagulls Love Too"
-starts, a portal opens in the room's entrance and a seagull comes out and lands
-on top of its rim. A $100 bill flutters down from the ceiling, the gull snatches
-it out of the air and flies back in (its sounds fade as it goes), then the player
+starts, a portal opens in the room's entrance and a seagull comes out and settles
+on the bottom of its rim. A $100 bill flutters down from the ceiling to it, the gull
+jumps up, catches it and flies back in (its sounds fade as it goes), then the player
 flies through the portal into the room scan. Jane's splat forms there out of
 particles and goes through her three poses, 10 s each, changing through a swirl
 of particles: surfboard, shaka, then singing into a microphone, where she stays.
@@ -43,35 +43,64 @@ Run locally: `python3 -m http.server` in this folder, open http://localhost:8000
 After the flight a gold ball floats in front of the player: touch it (or pinch
 while pointing at it) to play the 180° side-by-side video. On Quest it plays on
 a WebXR equirect media layer (sharp, nearly free on the GPU); elsewhere it falls
-back to a textured half sphere.
+back to a textured half sphere. Around the picture is a dark surround that
+follows the head and reaches 6° into the picture's rim with a soft border, so the
+room never shows between the two (`?edge=6` sets how far). While the video plays,
+the headset is asked for a display refresh rate that the video's frame rate
+divides (120 Hz for 60 fps), so frames step evenly; `?hz=90` asks for another
+rate and `?hz=0` leaves it alone.
 
-While it plays, three palm-sized buttons (8.4 cm) wait within reach about 30°
+While it plays, three palm-sized buttons (8.4 cm) are within reach about 45°
 below eye level (`video-controls.js`): back 10 s, pause / play and close, with
-the playing time and the source's tag (8K or 4K) above them. Press one with a fingertip, or point a controller
-(or a pinching hand) at it and pull the trigger (pinch); on a flat screen,
-click. The plate dims while you aren't looking at it or reaching for it. Close
-goes back to the room and Jane. Skipping back re-fetches segments if needed.
+the playing time and the source's tag (8K+, 8K or 4K) above them. Press one with
+a fingertip, or point a controller (or a pinching hand) at it and pull the
+trigger (pinch); on a flat screen, click. The plate fades out two seconds after
+it was last used and comes back, under wherever the viewer is facing by then,
+when they lift an open hand: the palm above the chest (less than 0.3 m under the
+eyes, `?lift=0.3`), fingers straight. A trigger pull, a pinch or a mouse move
+brings it back too. It stays while the video is paused or has no picture yet.
+Close goes back to the room and Jane.
 
-Two copies of the video:
+Three copies of the video:
 
-- **Original, 8K** (`ORIGINAL_SRC` in `main.js`): the master's 8000×4000,
-  60 fps HEVC picture copied bit for bit, cut into 2 s fMP4 segments by
-  `tools/segment-original.sh master.mov out_dir`. About 1 GB per minute, more
-  than GitHub Pages allows a site, so it is committed to the `video-8k` branch
-  (never merged; its README says how to replace the video) and streamed from
-  `https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/`.
-- **Copy, 4K** (`video/` in this repo): 4096×2048 H.264 at the source frame
+- **Original, "8K+"** (`ORIGINAL_SRC` in `main.js`): the master's 8000×4000,
+  60 fps HEVC picture copied bit for bit, about 130 Mbit/s, cut into fMP4
+  segments by `tools/segment-original.sh master.mov out_dir`.
+- **Light, "8K"** (`LIGHT_SRC`): the same size and frame rate at about
+  60 Mbit/s, `tools/encode-8k-light.sh master.mov out_dir` (slow: about 2 frames
+  a second on 4 cores).
+- **Copy, "4K"** (`video/` in this repo): 4096×2048 H.264 at the source frame
   rate, `tools/encode-video.sh master.mov video 30M`.
 
-Both are streamed with Media Source Extensions from `manifest.json`, so no file
-exceeds GitHub's 100 MB limit. In the headset the 8K original plays, and the
-4K copy takes over when the browser can't decode HEVC, when the connection is
-too slow for it (it needs about 130 Mbit/s; the first segments are timed while
-the page loads), or if it stops decoding part-way, at the same moment in the
-video. A flat screen or a phone gets the 4K copy. The controls show which one
-is playing ("8K" or "4K"), and `?debug` adds why the other was passed over.
-`?video=8k` or `?video=4k` forces one (no fallback then), and
-`?video=<folder>/,<folder>/` plays other copies, tried in that order.
+The two 8K ones take about 1 GB and 0.5 GB per minute, more than GitHub Pages
+allows a site, so they are committed to the `video-8k` branch (never merged; its
+README says how to replace the video) and streamed from
+`https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/` and its `light/`
+folder. All three are streamed with Media Source Extensions from `manifest.json`
+(`tools/manifest.py` writes it), so no file exceeds GitHub's 100 MB limit.
+
+How the headset keeps the picture smooth (`video.js`):
+
+- **It loads ahead.** As soon as the opening itself is loaded, well before the
+  ball is touched, the video starts downloading: the best copy that would be
+  ready to play through within about 40 s on this connection, otherwise a
+  lighter one. The 8K copies are kept on disk (Cache API), so the next visit
+  streams little or nothing. `?preload=0` turns loading ahead off, and
+  `?disk=300` sets the size in MB from which a copy is kept on disk.
+- **It picks when play is pressed.** The best copy that can play to the end
+  without stalling is chosen from what is on hand and the measured speed of the
+  connection.
+- **It steps down instead of stalling.** If the video stalls anyway (once for
+  over 1.5 s, or twice within 12 s), can't be decoded or won't start, a lighter
+  copy that the connection can keep up with takes over at the same moment.
+
+A flat screen or a phone gets the 4K copy. The controls show which copy is
+playing, and `?debug` adds why others were passed over, plus a second line: how
+the video is shown (`layer` or `texture`) and at what display rate, the seconds
+buffered in the player and on hand, the connection's speed, dropped frames and
+the number of stalls. `?video=original`, `?video=light`, `?video=8k` (both 8K
+copies) or `?video=4k` narrows the choice, and `?video=<folder>/,<folder>/`
+plays other copies, best first.
 
 Straight from Google Drive (file shared as "Anyone with the link"):
 `tools/fetch-drive.sh <drive share url> master.mov` downloads with resume;

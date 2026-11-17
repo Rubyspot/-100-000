@@ -7,8 +7,8 @@
 # 4096x2048 H.264 High (2048x2048 per eye) is the largest H.264 size Quest
 # Browser decodes reliably in hardware. Keeps the source frame rate (up to 60).
 # 2 s segments stay far below GitHub's 100 MB file limit. This is the fallback
-# for browsers that can't decode the untouched 8K HEVC master
-# (tools/segment-original.sh).
+# for browsers that can't decode the 8K HEVC sources (tools/segment-original.sh,
+# tools/encode-8k-light.sh) and for connections too slow for them.
 set -euo pipefail
 in="$1"; out="${2:-video}"; rate="${3:-30M}"
 mkdir -p "$out"; rm -f "$out"/*.m4s "$out"/init.mp4 "$out"/manifest.json "$out"/index.m3u8
@@ -23,16 +23,6 @@ ffmpeg -hide_banner -y -i "$in" \
   "$out/index.m3u8"
 
 has_audio=$(ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$in" | head -1)
-python3 - "$out" "$has_audio" <<'PY'
-import json, sys, re
-out, has_audio = sys.argv[1], sys.argv[2]
-lines = open(f"{out}/index.m3u8").read().splitlines()
-segs = [l for l in lines if l.endswith(".m4s")]
-dur = sum(float(re.match(r"#EXTINF:([\d.]+)", l).group(1)) for l in lines if l.startswith("#EXTINF"))
-codecs = "avc1.640034" + (",mp4a.40.2" if has_audio else "")
-json.dump({"label": "4K", "mime": f'video/mp4; codecs="{codecs}"', "init": "init.mp4", "segments": segs, "duration": dur},
-          open(f"{out}/manifest.json", "w"), indent=1)
-print(f"{len(segs)} segments, {dur:.1f} s")
-PY
 rm -f "$out/index.m3u8"
+python3 "$(dirname "$0")/manifest.py" "$out" --label 4K --mime "video/mp4; codecs=\"avc1.640034${has_audio:+,mp4a.40.2}\""
 du -sh "$out"

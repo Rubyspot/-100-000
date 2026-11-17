@@ -1,7 +1,7 @@
 // $100,000 opening.
 // Mixed reality: "Seagulls Love Too" starts, a portal opens in the room's
-// entrance, a seagull comes out and lands on top of its rim. A $100 bill
-// flutters down from the ceiling, the gull snatches it out of the air and
+// entrance, a seagull comes out and settles on the bottom of its rim. A $100
+// bill flutters down from the ceiling to it, the gull jumps up, catches it and
 // flies back in, and the player flies through the portal into the room scan.
 // Jane forms out of particles there and goes through her poses, 10 s each
 // (surfboard, shaka, then singing into a microphone), and the play ball starts
@@ -26,20 +26,24 @@ const num = (name, def) => {
 const USE_LOD = params.get('lod') !== '0';
 const DEBUG = params.has('debug');
 const FLY_SPEED = num('speed', 0.4); // m/s, constant
-// Untouched 8K60 HEVC master (tools/segment-original.sh): too big for GitHub
-// Pages (1 GB a site), so it lives on the video-8k branch and streams from
-// GitHub's raw file server. The headset plays it; the 4K H.264 copy in
-// ./video/ takes over where HEVC can't be decoded or the connection is too
-// slow for its 130 Mbit/s (video.js), and is all a flat screen or a phone needs.
-// ?video=8k or ?video=4k forces one; ?video=<folder>/,<folder>/ lists others.
+// Untouched 8K60 HEVC master (tools/segment-original.sh, 130 Mbit/s): too big
+// for GitHub Pages (1 GB a site), so it lives on the video-8k branch and
+// streams from GitHub's raw file server. Next to it, in light/, is the same 8K
+// picture at 60 Mbit/s (tools/encode-8k-light.sh) for connections that can't
+// keep up with the master. The headset loads the best of the two it can ahead
+// of time and plays the one that will run without stalling (video.js); the 4K
+// H.264 copy in ./video/ takes over where HEVC can't be decoded or the
+// connection is too slow for both, and is all a flat screen or a phone needs.
+// ?video=original, light, 8k (both 8K ones) or 4k picks; ?video=<folder>/,<folder>/ lists others.
 const ORIGINAL_SRC = 'https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/';
+const LIGHT_SRC = `${ORIGINAL_SRC}light/`;
 const COPY_SRC = './video/';
 const IS_HEADSET = /OculusBrowser|Quest/i.test(navigator.userAgent);
 const VIDEO_SRC = (() => {
-  const named = { '8k': ORIGINAL_SRC, '4k': COPY_SRC };
+  const named = { original: [ORIGINAL_SRC], light: [LIGHT_SRC], '8k': [ORIGINAL_SRC, LIGHT_SRC], '4k': [COPY_SRC] };
   const asked = (params.get('video') || '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (asked.length) return asked.map((s) => named[s.toLowerCase()] || s);
-  return IS_HEADSET ? [ORIGINAL_SRC, COPY_SRC] : [COPY_SRC];
+  if (asked.length) return asked.flatMap((s) => named[s.toLowerCase()] || [s]);
+  return IS_HEADSET ? [ORIGINAL_SRC, LIGHT_SRC, COPY_SRC] : [COPY_SRC];
 })();
 // Room scan: 400k splats (Ilia, Nov 16), its floor lifted 7 cm to meet the
 // real one. ?scan=<url> and ?floor=<metres> override.
@@ -562,29 +566,75 @@ rig.add(handMesh);
 const fingertips = [];
 const tmpMat = new THREE.Matrix4(), tmpPos = new THREE.Vector3(), tmpQuat = new THREE.Quaternion(), tmpScale = new THREE.Vector3();
 
+// An open hand held up brings the video controls back (video-controls.js).
+// Up: the palm less than LIFT_BELOW metres under the eyes, which is above
+// where hands rest in a lap or on armrests, and in front of the body. Open:
+// at least three of the four fingers straight. ?lift=0.3 sets the height.
+const LIFT_BELOW = num('lift', 0.3);
+const lift = { up: false, since: 0, lost: 0, hands: false };
+const J = Object.fromEntries(JOINTS.map((name, i) => [name, i]));
+const FINGERS = ['index', 'middle', 'ring', 'pinky'].map((f) => [
+  J[`${f}-finger-phalanx-proximal`], J[`${f}-finger-phalanx-intermediate`], J[`${f}-finger-phalanx-distal`], J[`${f}-finger-tip`]]);
+const jointAt = JOINTS.map(() => new THREE.Vector3()); // world positions of the hand being read
+const headAt = new THREE.Vector3(), headFwd = new THREE.Vector3(), palmAt = new THREE.Vector3();
+function handLifted() {
+  // The middle of the palm: halfway from the wrist to the knuckles.
+  palmAt.addVectors(jointAt[FINGERS[0][0]], jointAt[FINGERS[3][0]]).multiplyScalar(0.25).addScaledVector(jointAt[J.wrist], 0.5);
+  if (palmAt.y < headAt.y - LIFT_BELOW || palmAt.sub(headAt).dot(headFwd) < 0.1) return false;
+  let straight = 0;
+  for (const [a, b, c, tip] of FINGERS) {
+    const chain = jointAt[a].distanceTo(jointAt[b]) + jointAt[b].distanceTo(jointAt[c]) + jointAt[c].distanceTo(jointAt[tip]);
+    if (chain > 0 && jointAt[a].distanceTo(jointAt[tip]) / chain > 0.9) straight += 1;
+  }
+  return straight >= 3;
+}
+
 function updateHands(frame) {
   const session = renderer.xr.getSession();
   const ref = renderer.xr.getReferenceSpace();
-  let n = 0;
+  let n = 0, hands = false, lifted = false;
   fingertips.length = 0;
   if (session && frame && ref && frame.getJointPose) {
+    const head = renderer.xr.getCamera();
+    headAt.setFromMatrixPosition(head.matrixWorld);
+    headFwd.set(0, 0, -1).transformDirection(head.matrixWorld).setY(0);
+    if (headFwd.lengthSq() < 1e-6) headFwd.set(0, 0, -1);
+    headFwd.normalize();
     for (const src of session.inputSources) {
       if (!src.hand) continue;
-      for (const name of JOINTS) {
-        const space = src.hand.get(name);
+      hands = true;
+      let seen = 0;
+      for (let j = 0; j < JOINTS.length; j++) {
+        const space = src.hand.get(JOINTS[j]);
         const pose = space && frame.getJointPose(space, ref);
         if (!pose) continue;
         const p = pose.transform.position, o = pose.transform.orientation;
         tmpPos.set(p.x, p.y, p.z); tmpQuat.set(o.x, o.y, o.z, o.w);
         tmpScale.setScalar(Math.max(0.006, pose.radius || 0.008));
         handMesh.setMatrixAt(n++, tmpMat.compose(tmpPos, tmpQuat, tmpScale));
-        if (name === 'index-finger-tip') fingertips.push(tmpPos.clone().applyMatrix4(rig.matrixWorld));
+        jointAt[j].copy(tmpPos).applyMatrix4(rig.matrixWorld);
+        seen += 1;
+        if (JOINTS[j] === 'index-finger-tip') fingertips.push(jointAt[j].clone());
       }
+      if (seen === JOINTS.length && handLifted()) lifted = true;
     }
   }
   handMesh.count = n;
   handMesh.instanceMatrix.needsUpdate = true;
+  // Held for a moment before it counts, and for a moment after it is lost.
+  const t = clock.now;
+  if (lifted) {
+    if (!lift.since) lift.since = t;
+    lift.lost = 0;
+    if (t - lift.since > 0.15) lift.up = true;
+  } else {
+    lift.since = 0;
+    if (lift.up && !lift.lost) lift.lost = t;
+    if (!lift.up || t - lift.lost > 0.25) { lift.up = false; lift.lost = 0; }
+  }
+  lift.hands = hands;
 }
+window.__hands = { lift, update: updateHands }; // test hook
 
 // Controller rays, drawn only while they point at the video controls.
 const pointers = [0, 1].map((i) => {
@@ -607,7 +657,7 @@ const rayOf = (obj) => {
 
 // ---------- in-headset text (replay hint, debug fps) ----------
 
-function makeLabel(width = 512, height = 128) {
+function makeLabel(width = 512, height = 128, size = 46) {
   const cv = document.createElement('canvas'); cv.width = width; cv.height = height;
   const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width / 1000, height / 1000),
@@ -618,17 +668,40 @@ function makeLabel(width = 512, height = 128) {
     g.clearRect(0, 0, width, height);
     g.fillStyle = 'rgba(13,20,18,0.72)';
     g.beginPath(); g.roundRect(4, 4, width - 8, height - 8, 28); g.fill();
-    g.fillStyle = '#f2c45a'; g.font = '600 46px system-ui, sans-serif';
+    g.fillStyle = '#f2c45a'; g.font = `600 ${size}px system-ui, sans-serif`;
     g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(text, width / 2, height / 2);
+    const lines = String(text).split('\n');
+    lines.forEach((line, i) => g.fillText(line, width / 2, height / 2 + (i - (lines.length - 1) / 2) * size * 1.25, width - 40));
     tex.needsUpdate = true;
   };
   return mesh;
 }
 // ---------- play button and 180 video ----------
 
-const video = new Video180({ renderer, scene, src: VIDEO_SRC });
+// ?edge=6: degrees the dark surround reaches into the picture's rim. ?hz=90:
+// display refresh rate while the video plays (0 leaves it alone; by default
+// one the video's frame rate divides, 120 for 60 fps). ?disk=300: sources of
+// at least this many MB are kept on disk between visits.
+const video = new Video180({
+  renderer, scene, src: VIDEO_SRC,
+  edge: num('edge', 6),
+  hz: params.has('hz') ? num('hz', 0) : undefined,
+  keepFrom: num('disk', 300) * 1e6,
+});
 video.ready.catch((err) => console.warn('Video not available:', err.message || err));
+// The video starts loading as soon as the opening has what it needs (the
+// start buttons are unlocked and Jane's scans are in), so by the time the
+// ball is touched most of it is here. ?preload=0 leaves it until then.
+if (params.get('preload') !== '0') {
+  const startButton = $('preview');
+  const unlocked = new Promise((done) => {
+    const check = () => { if (!startButton.disabled) { watch.disconnect(); done(); } };
+    const watch = new MutationObserver(check);
+    watch.observe(startButton, { attributes: true, attributeFilter: ['disabled'] });
+    check();
+  });
+  Promise.allSettled([unlocked, splatJane?.ready]).then(() => video.preload());
+}
 // Back 10 s, pause / play and close, within reach while the video plays.
 const videoControls = new VideoControls({
   scene, listener,
@@ -636,6 +709,8 @@ const videoControls = new VideoControls({
   onToggle: () => video.togglePause(),
   onClose: () => video.stop(),
 });
+// On a flat screen, moving the mouse brings them back.
+renderer.domElement.addEventListener('pointermove', () => { if (!renderer.xr.isPresenting) videoControls.wake(); });
 
 const playBall = new THREE.Group();
 {
@@ -678,6 +753,7 @@ anchor.add(hint);
 
 function startVideo() {
   if (video.playing || !playBall.visible) return;
+  video.prime(); // the player fills while the room fades
   stopMusic();
   playBall.userData.pressedAt = clock.now;
   hint.visible = false;
@@ -743,7 +819,7 @@ function updateMusic(dt) {
   if (!musicState.target && musicState.level < 0.005 && !music.paused) music.pause();
 }
 
-const fpsLabel = makeLabel(720, 96);
+const fpsLabel = makeLabel(900, 150, 38);
 fpsLabel.position.set(0, -0.18, -0.6);
 fpsLabel.visible = DEBUG;
 camera.add(fpsLabel);
@@ -752,13 +828,14 @@ camera.add(fpsLabel);
 
 const T_PORTAL = 0.6;      // portal opens
 const T_GULL_OUT = 1.3;    // gull comes out through the portal...
-const T_PERCH = 2.8;       // ...and lands on top of its rim, facing the viewer
+const T_PERCH = 2.8;       // ...and settles on the bottom of its rim, facing the viewer
 const T_CALLS = [3.25];    // and yells at them
-const T_BILL = 3.5;        // a $100 bill appears at the ceiling and flutters down past the gull
+const T_BILL = 3.5;        // a $100 bill appears at the ceiling and flutters down to the gull
 const BILL_FALL = 0.42;    // m/s
-const BILL_DROP = 0.85;    // m it falls before the gull catches it, about the portal's centre height
-const T_GRAB = T_BILL + BILL_DROP / BILL_FALL; // the gull snatches it out of the air (~5.5 s)
-const T_SWOOP = T_GRAB - 0.6;     // gull drops off the rim for it
+const BILL_TOP = 0.75;     // m above eye level, where it appears
+const BILL_DROP = 0.88;    // m it falls before the gull catches it, half a metre above the rim's lowest point
+const T_GRAB = T_BILL + BILL_DROP / BILL_FALL; // the gull catches it (~5.6 s)
+const T_SWOOP = T_GRAB - 0.5;     // gull jumps up off the rim for it
 const T_GULL_GONE = T_GRAB + 2.6; // gull is through the portal and out of sight
 const T_GLIDE = T_GRAB + 0.9;     // player starts flying through the portal
 
@@ -791,10 +868,10 @@ function flightDistance(t) {
 
 function billPose(tb, out) {
   // Flutters down from the ceiling in front of the portal, drifting side to
-  // side, until the gull catches it (it never reaches the floor).
-  const top = state.eye + BILL_DROP - 0.1;
+  // side, to the gull waiting under it (it never reaches the floor).
+  const top = state.eye + BILL_TOP;
   out.position.set(
-    0.26 + 0.1 * Math.sin(tb * 2.2),
+    0.08 + 0.1 * Math.sin(tb * 2.2),
     Math.max(0.006, top - BILL_FALL * tb),
     -0.8 + 0.05 * Math.sin(tb * 1.7),
   );
@@ -818,9 +895,9 @@ function portalPoseAt(t, fly) {
 const gullOutCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
 const gullSwoopCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
 const gullInCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
-// Where it catches the bill it's flying right and a little toward the viewer.
-const SWOOP_END = new THREE.Vector3(0.85, -0.35, 0.4).normalize();
-const ZERO = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+// Where it catches the bill it's flying up and toward the viewer, a little to the right.
+const SWOOP_END = new THREE.Vector3(0.3, 0.62, 0.72).normalize();
+const ZERO = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), X_AXIS = new THREE.Vector3(1, 0, 0);
 const tmpM = new THREE.Matrix4();
 // Rotation (anchor space) that turns the gull's beak along `dir`.
 const facing = (dir, out = new THREE.Quaternion()) => out.setFromRotationMatrix(tmpM.lookAt(dir, ZERO, UP));
@@ -832,8 +909,8 @@ function placeGull(body, quat, perch) {
   const off = new THREE.Vector3().lerpVectors(u.bodyFly, u.bodyRest, clamp01(perch)).applyQuaternion(quat);
   gull.position.copy(body).sub(off);
 }
-// The top of the portal's rim, where the gull sits (anchor space).
-const perchPoint = (pp) => new THREE.Vector3(0, pp.y + pp.r + 0.003, pp.z);
+// The lowest point of the portal's rim, where the gull sits (anchor space).
+const perchPoint = (pp) => new THREE.Vector3(0, pp.y - pp.r + 0.003, pp.z);
 // Its body when it sits there turned by `quat`.
 function perchBody(pp, quat) {
   const u = gull.userData;
@@ -857,15 +934,15 @@ function startSequence() {
 
   const pz = PORTAL_Z, py = state.eye - 0.08;
   const u = gull.userData;
-  // Sitting on top of the open portal, facing the viewer (the anchor's +Z).
+  // Sitting on the bottom of the open portal's rim, facing the viewer (the anchor's +Z).
   const sit = perchBody({ y: py, r: PORTAL_R, z: pz }, new THREE.Quaternion());
-  // Out through the disk toward the viewer, up in front of the rim, and a
-  // flare back down onto its top.
+  // Out through the lower half of the disk toward the viewer, and a flare
+  // back down onto the lowest point of the rim.
   gullOutCurve.points = [
-    new THREE.Vector3(0.06, py - 0.04, pz - 0.65),
-    new THREE.Vector3(0.02, py + 0.03, pz + 0.16),
-    new THREE.Vector3(0.14, sit.y - 0.05, pz + 0.27),
-    new THREE.Vector3(0.05, sit.y + 0.13, pz + 0.12),
+    new THREE.Vector3(0.06, py - 0.08, pz - 0.65),
+    new THREE.Vector3(0.04, py - 0.2, pz + 0.12),
+    new THREE.Vector3(0.1, sit.y + 0.17, pz + 0.3),
+    new THREE.Vector3(0.04, sit.y + 0.09, pz + 0.14),
     sit.clone(),
   ];
   // Catch: the beak tip meets the falling bill while the gull flies along
@@ -874,16 +951,18 @@ function startSequence() {
   const grabBody = billAt.clone().sub(u.tipLocal.clone().sub(u.bodyFly).applyQuaternion(facing(SWOOP_END)));
   gullSwoopCurve.points = [
     sit.clone(),
-    sit.clone().add(new THREE.Vector3(0.02, 0.05, 0.12)),
-    grabBody.clone().add(new THREE.Vector3(-0.1, 0.18, -0.03)),
+    sit.clone().lerp(grabBody, 0.45).add(new THREE.Vector3(0.01, -0.02, -0.02)),
     grabBody.clone(),
   ];
-  // Off with it: on to the right, a turn back, and in through the disk.
+  // Off with it: up toward the viewer's right, round in a climbing turn, and
+  // in through the disk.
   gullInCurve.points = [
     grabBody.clone(),
-    grabBody.clone().add(new THREE.Vector3(0.16, 0.08, 0.12)),
-    new THREE.Vector3(0.32, py + 0.2, pz + 0.18),
-    new THREE.Vector3(0.1, py + 0.08, pz - 0.35),
+    grabBody.clone().addScaledVector(SWOOP_END, 0.16),
+    new THREE.Vector3(0.26, py + 0.08, pz + 0.25),
+    new THREE.Vector3(0.4, py + 0.22, pz + 0.14),
+    new THREE.Vector3(0.34, py + 0.25, pz - 0.04),
+    new THREE.Vector3(0.12, py + 0.13, pz - 0.38),
     new THREE.Vector3(-0.3, py + 0.45, pz - 2.2),
     new THREE.Vector3(-0.65, py + 1.0, pz - 4.0),
   ];
@@ -971,20 +1050,23 @@ function update(t, dt) {
     let jawOpen = 0, look = null, lookW = 0;
     const toViewer = (from) => facing(v2.set(camLocal.x - from.x, 0, camLocal.z - from.z));
     if (T < T_PERCH) {
-      // Out through the portal and a flare back onto the top of its rim,
+      // Out through the portal and a flare back onto the bottom of its rim,
       // turning to face the viewer as it lands.
       const k = clamp01((T - T_GULL_OUT) / (T_PERCH - T_GULL_OUT));
       const u = 1 - (1 - k) * (1 - k);
       const body = gullOutCurve.getPointAt(u, v1);
       const q = facing(gullOutCurve.getTangentAt(Math.min(0.999, u), v2));
-      const turn = smooth01((k - 0.5) / 0.4);
+      // It faces the viewer by the time it stops coming forward, then backs
+      // down onto the rim with its body tipped up, braking with its wings.
+      const turn = smooth01((k - 0.15) / 0.28);
       const sit = smooth01((k - 0.72) / 0.28);
       q.slerp(toViewer(body), turn);
+      q.multiply(tmpQuat.setFromAxisAngle(X_AXIS, -0.5 * Math.sin(Math.PI * clamp01((k - 0.4) / 0.55))));
       poseGull(dt, 1, THREE.MathUtils.lerp(BEAT, BEAT_HOVER, clamp01((k - 0.45) / 0.3)), sit);
       placeGull(body, q, sit);
       setObjectMasked(!state.inside && body.z < pp.z);
     } else if (T < T_SWOOP) {
-      // Sitting on the rim: looks at the viewer, yells, then watches the bill fall.
+      // Sitting on the rim: looks at the viewer, yells, then watches the bill come down.
       const q = toViewer(perchPoint(pp));
       poseGull(dt, 0, BEAT, 1);
       placeGull(perchBody(pp, q), q, 1);
@@ -998,23 +1080,27 @@ function update(t, dt) {
       look = camWorld.clone().lerp(anchor.localToWorld(billPositionAt(Math.max(0, T - T_BILL))), watchBill);
       lookW = smooth01((T - T_PERCH) / 0.4);
     } else if (T < T_GRAB) {
-      // Drops off the rim and snatches the bill out of the air.
+      // Jumps up off the rim and catches the bill, beak open until it has it.
       const k = clamp01((T - T_SWOOP) / (T_GRAB - T_SWOOP));
-      const u = k * k * (3 - 2 * k);
+      const u = 1 - (1 - k) * (1 - k); // springs off, slowing to the top of the jump
       const body = gullSwoopCurve.getPointAt(u, v1);
-      const q = facing(gullSwoopCurve.getTangentAt(Math.min(0.999, u), v2));
-      q.slerp(facing(SWOOP_END), smooth01((k - 0.6) / 0.35));
-      const sit = 1 - smooth01(k / 0.35);
+      // From facing the viewer on the rim to pointing up the jump at the bill.
+      const q = toViewer(perchPoint(pp)).slerp(facing(SWOOP_END, tmpQuat), smooth01(k / 0.75));
+      const sit = 1 - smooth01(k / 0.45);
       poseGull(dt, 1, BEAT_HOVER, sit);
       placeGull(body, q, sit);
       look = anchor.localToWorld(billPositionAt(T - T_BILL));
       lookW = 1 - smooth01((k - 0.5) / 0.4);
+      jawOpen = 0.5 * smooth01((k - 0.2) / 0.4);
     } else {
       // Off through the portal with the bill; its sounds fade as it goes.
       const k = clamp01((T - T_GRAB) / (T_GULL_GONE - T_GRAB));
-      const u = Math.min(1, k < 0.5 ? 2 * k * k : k);
+      // Picks up speed over the first half, then holds it.
+      const u = Math.min(1, k < 0.5 ? (k * k) / 0.75 : (k - 0.25) / 0.75);
       const body = gullInCurve.getPointAt(u, v1);
-      const q = facing(gullInCurve.getTangentAt(Math.min(0.999, u), v2));
+      // Carries on the way it jumped, then follows its path.
+      const q = facing(SWOOP_END).slerp(
+        facing(gullInCurve.getTangentAt(Math.min(0.999, u), v2), tmpQuat), smooth01((T - T_GRAB) / 0.3));
       poseGull(dt, 1, BEAT, 0, !state.gullAway);
       placeGull(body, q, 0);
       const behind = !state.inside && body.z < pp.z;
@@ -1187,22 +1273,26 @@ renderer.setAnimationLoop((time, frame) => {
   update(t, dt);
   splatJane?.update(t);
   updateMusic(dt);
-  video.update();
+  const inXr = renderer.xr.isPresenting, head = inXr ? renderer.xr.getCamera() : camera;
+  video.update(head);
   jane.update(t, dt, frame);
-  if (renderer.xr.isPresenting) updateHands(frame);
+  if (inXr) updateHands(frame);
   if (videoControls.visible) {
     const rayHits = [];
+    let controllers = false;
     for (const { c, line } of pointers) {
       const src = c.userData.source;
-      if (!renderer.xr.isPresenting || !src || src.hand || src.targetRayMode !== 'tracked-pointer') { line.visible = false; continue; }
+      if (!inXr || !src || src.hand || src.targetRayMode !== 'tracked-pointer') { line.visible = false; continue; }
+      controllers = true;
       const hit = videoControls.hitRay(rayOf(c));
-      line.visible = hit.near;
+      line.visible = hit.near && videoControls.shown;
       if (hit.near) line.scale.z = hit.distance;
       rayHits.push(hit);
     }
     videoControls.update(t, dt, {
-      fingertips, rayHits,
-      head: renderer.xr.isPresenting ? renderer.xr.getCamera() : camera,
+      fingertips, rayHits, head,
+      lifted: inXr && lift.up, waiting: video.waiting,
+      input: !inXr ? 'screen' : (controllers && !lift.hands ? 'controller' : 'hand'),
       paused: video.paused, time: video.currentTime, duration: video.duration, label: video.label,
     });
   } else {
@@ -1211,8 +1301,10 @@ renderer.setAnimationLoop((time, frame) => {
   if (DEBUG) {
     clock.frames++;
     if (t - clock.fpsT > 0.5) {
-      // Frame rate, and which video source plays (and why not another).
-      fpsLabel.userData.draw(`${Math.round(clock.frames / (t - clock.fpsT))} fps${video.note ? ` · ${video.note}` : ''}`);
+      // Frame rate and which video source plays (and why not another); under
+      // it, how the video is shown and how it is loading.
+      const fps = `${Math.round(clock.frames / (t - clock.fpsT))} fps${video.note ? ` · ${video.note}` : ''}`;
+      fpsLabel.userData.draw(video.stats ? `${fps}\n${video.stats}` : fps);
       clock.frames = 0; clock.fpsT = t;
     }
   }
