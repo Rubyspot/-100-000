@@ -3,9 +3,10 @@
 // entrance, a seagull comes out and lands on top of its rim. A $100 bill
 // flutters down from the ceiling, the gull snatches it out of the air and
 // flies back in, and the player flies through the portal into the room scan.
-// Jane forms out of particles there, stays 10 s, turns into her second scan,
-// and the play ball starts the 180 video, with palm-sized controls (back 10 s,
-// pause, close) within reach while it plays.
+// Jane forms out of particles there and goes through her poses, 10 s each
+// (surfboard, shaka, then singing into a microphone), and the play ball starts
+// the 180 video, with palm-sized controls (back 10 s, pause, close) within
+// reach while it plays.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
@@ -13,7 +14,7 @@ import { Video180 } from './video.js';
 import { VideoControls } from './video-controls.js';
 import { GullVoice } from './audio.js';
 import { createJane } from './jane/jane.js';
-import { createSplatJane } from './jane/splat-jane.js';
+import { createSplatJane, JANE_SCANS } from './jane/splat-jane.js';
 
 const params = new URLSearchParams(location.search);
 const num = (name, def) => {
@@ -275,8 +276,15 @@ scanGroup.add(room);
 
 // Jane's splats stand in the room at JANE_SPOT, turned toward the point where
 // the flight ends (jane/splat-jane.js has the particle transformation).
-// Scan (x, z) is (x, -z) in scanGroup.
+// Scan (x, z) is (x, -z) in scanGroup. On arrival she goes through her poses
+// in order (?poses=surf,new,sing; ?hold=10 seconds each) and stays on the
+// last until the video. After it she comes back in the shaka pose (new),
+// the one she talks in, or the last pose if that one isn't in the list.
 const ARRIVAL_SCAN = TARGET.at.clone().addScaledVector(FLY_DIR, -TARGET.stop);
+const JANE_POSES = (() => {
+  const list = (params.get('poses') || '').split(',').map((s) => s.trim()).filter((k) => JANE_SCANS[k]);
+  return list.length ? list : ['surf', 'new', 'sing'];
+})();
 const splatJane = params.get('jane') === 'off' ? null : createSplatJane({
   parent: scanGroup,
   spot: new THREE.Vector3(JANE_SPOT.x, 0, -JANE_SPOT.y),
@@ -284,11 +292,14 @@ const splatJane = params.get('jane') === 'off' ? null : createSplatJane({
   spark,
   height: num('height', 1.75),
   sparks: num('sparks', 0.35), // share of splats that fly as sparks in her transformation
+  hold: Math.max(1, num('hold', 10)),
+  scans: JANE_POSES.map((k) => JANE_SCANS[k]),
 });
 if (splatJane) {
+  const afterVideo = JANE_POSES.includes('new') ? JANE_POSES.indexOf('new') : JANE_POSES.length - 1;
   addEventListener('scene:arrived', () => splatJane.appear(0, true));
   addEventListener('scene:video-start', () => splatJane.hide());
-  addEventListener('scene:video-end', () => splatJane.appear(1, false));
+  addEventListener('scene:video-end', () => splatJane.appear(afterVideo, false));
 }
 
 // A plain room stands in for passthrough when previewing on a flat screen.

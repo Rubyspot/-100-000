@@ -26,12 +26,14 @@
 //   ?lod=0                            no Spark LoD on the room
 //   ?set=surf                         only the surfboard Jane (surf.sog, 900k, anti-aliased) in the room;
 //                                     ?q= then picks 900k (SH3, SPZ) | 900k-sh0 | 500k | 300k | 200k | 100k
+//   ?set=sing                         only the singing Jane (Sing.ply, 677k, anti-aliased) in the room;
+//                                     ?q= then picks 677k (SH3, SPZ) | 677k-sh0 | 300k | 200k | 150k | 100k
 import * as THREE from 'three';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { SCRIPTED } from '../jane/persona.js';
 
 const params = new URLSearchParams(location.search);
-const SET = params.get('set') === 'surf' ? 'surf' : 'poses';
+const SET = ['surf', 'sing'].includes(params.get('set')) ? params.get('set') : 'poses';
 const SURF_QUALITIES = {
   '900k': { url: '../assets/jane/surf-900k.spz', count: 900642, note: 'original, SH3' },
   '900k-sh0': { url: '../assets/jane/surf-900k-sh0.sog', count: 900642, note: 'no SH' },
@@ -41,6 +43,14 @@ const SURF_QUALITIES = {
   '150k': { url: '../assets/jane/surf-150k.sog', count: 150000, note: 'no SH' },
   '100k': { url: '../assets/jane/surf-100k.sog', count: 100000, note: 'no SH' },
 };
+const SING_QUALITIES = {
+  '677k': { url: '../assets/jane/sing-677k.spz', count: 677036, note: 'original, SH3' },
+  '677k-sh0': { url: '../assets/jane/sing-677k-sh0.sog', count: 677036, note: 'no SH' },
+  '300k': { url: '../assets/jane/sing-300k.sog', count: 300000, note: 'no SH' },
+  '200k': { url: '../assets/jane/sing-200k.sog', count: 200000, note: 'no SH' },
+  '150k': { url: '../assets/jane/sing-150k.sog', count: 150000, note: 'no SH' },
+  '100k': { url: '../assets/jane/sing-100k.sog', count: 100000, note: 'no SH' },
+};
 const POSE_QUALITIES = {
   '315k': { url: '../assets/jane/jane-315k.sog', count: 315490, note: 'original, SH3' },
   '315k-sh0': { url: '../assets/jane/jane-315k-sh0.sog', count: 315490, note: 'no SH' },
@@ -48,7 +58,7 @@ const POSE_QUALITIES = {
   '150k': { url: '../assets/jane/jane-150k.sog', count: 150000, note: 'no SH' },
   '75k': { url: '../assets/jane/jane-75k.sog', count: 75000, note: 'no SH' },
 };
-const QUALITIES = SET === 'surf' ? SURF_QUALITIES : POSE_QUALITIES;
+const QUALITIES = { surf: SURF_QUALITIES, sing: SING_QUALITIES }[SET] || POSE_QUALITIES;
 // Defaults are Ilia's Quest picks (Nov 16): Jane 150k, room 400k (was 300k),
 // budget 500k, resolution 0.8, fast preset with room LoD 1, foveation 1.
 const Q = QUALITIES[params.get('q')] ? params.get('q') : '150k';
@@ -143,9 +153,17 @@ const PLACEHOLDER = [
 const URLS = (params.get('urls') || '').split(',').map((s) => s.trim()).filter(Boolean);
 // Surfboard Jane: same Postshot units as NEW (feet at about -0.1).
 const SCAN_SURF = { height: 1.634, feetY: -0.065, cx: -0.003, cz: -0.19, yaw: 0, aa: true };
-const N_POSES = SET === 'surf' ? 1 : URLS.length || Math.min(REAL.length + PLACEHOLDER.length - 1, Math.max(1, Number(params.get('poses')) || 3));
+// Singing Jane (Nov 17): feet where surf's are, but her head is 1.83 units up
+// (NEW's and surf's 1.70), so this scan's units are about 8% larger.
+const SCAN_SING = { height: 1.765, feetY: -0.065, cx: -0.098, cz: -0.193, yaw: 0, aa: true };
+// Sets with a single scan, and their start card.
+const SINGLE = {
+  surf: { scan: SCAN_SURF, title: 'Surf Jane splat test', sub: 'Jane with the surfboard in the room scan, with a live performance readout. Pick her splat count and the room\'s below.' },
+  sing: { scan: SCAN_SING, title: 'Singing Jane splat test', sub: 'Jane singing into a microphone in the room scan, with a live performance readout. Pick her splat count and the room\'s below.' },
+}[SET];
+const N_POSES = SINGLE ? 1 : URLS.length || Math.min(REAL.length + PLACEHOLDER.length - 1, Math.max(1, Number(params.get('poses')) || 3));
 const POSES = Array.from({ length: N_POSES }, (_, i) => {
-  if (SET === 'surf') return { name: 'surf', yaw: 0, scan: SCAN_SURF, url: QUALITIES[Q].url, count: QUALITIES[Q].count };
+  if (SINGLE) return { name: SET, yaw: 0, scan: SINGLE.scan, url: QUALITIES[Q].url, count: QUALITIES[Q].count };
   if (URLS.length) return { name: URLS[i].split('/').pop().replace(/\.\w+$/, ''), yaw: 0, scan: SCAN1, url: URLS[i], count: 0 };
   if (i < REAL.length) return { ...REAL[i], url: REAL[i].url || QUALITIES[Q].url, count: i === 0 ? QUALITIES[Q].count : 0 };
   return { ...PLACEHOLDER[i - REAL.length + 1], scan: SCAN1, url: QUALITIES[Q].url, count: QUALITIES[Q].count };
@@ -153,10 +171,10 @@ const POSES = Array.from({ length: N_POSES }, (_, i) => {
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
-if (SET === 'surf') {
-  document.querySelector('h1').textContent = 'Surf Jane splat test';
-  document.querySelector('.sub').textContent = 'Jane with the surfboard in the room scan, with a live performance readout. Pick her splat count and the room\'s below.';
-  document.title = 'Surf Jane splat test';
+if (SINGLE) {
+  document.querySelector('h1').textContent = SINGLE.title;
+  document.querySelector('.sub').textContent = SINGLE.sub;
+  document.title = SINGLE.title;
 }
 
 // Option chips on the start card are plain links that reload with new params.
@@ -164,7 +182,7 @@ const CHIPS = { q: Object.keys(QUALITIES), mode: ['preload', 'stream'], poses: [
 const CURRENT = { roomq: ROOMQ, q: Q, mode: MODE, poses: String(N_POSES), budget: String(BUDGET / 1000), fb: String(FB), janelod: JANE_LOD ? '1' : '0', preset: PRESET, stddev: STDDEV ? String(STDDEV) : '2.83', lodpx: String(LODPX), ffr: String(FFR) };
 for (const box of document.querySelectorAll('.opts')) {
   const key = box.dataset.param;
-  if (SET === 'surf' && (key === 'mode' || key === 'poses')) { box.closest('fieldset').hidden = true; continue; }
+  if (SINGLE && (key === 'mode' || key === 'poses')) { box.closest('fieldset').hidden = true; continue; }
   for (const v of CHIPS[key]) {
     const p = new URLSearchParams(location.search); p.set(key, v);
     const a = document.createElement('a');
