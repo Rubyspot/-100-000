@@ -208,8 +208,15 @@ function makeTerrainMaterial(sky, noiseMap) {
 
         vec3 sand = vColor * (0.9 + 0.2 * n.a) * (0.96 + 0.08 * sin(vWorld.x * 2.1 + n.r * 6.0));
         sand = mix(sand, sand * vec3(0.72, 0.70, 0.64), 1.0 - smoothstep(0.1, 0.5, vWorld.y + (n.g - 0.5) * 0.2));
-        float clump = texture2D(noiseMap, vWorld.xz * 0.31 + vWorld.y * 0.23).g;
+        // Leaf clusters, looked up in the plane each facet lies closest to,
+        // so the pattern never smears down a steep side.
+        vec3 aN = abs(N);
+        vec2 lp = aN.y > max(aN.x, aN.z) ? vWorld.xz : (aN.x > aN.z ? vWorld.zy : vWorld.xy);
+        vec4 cl = texture2D(noiseMap, lp * 0.31 + 0.37);
+        float clump = cl.g;
         vec3 leaf = vColor * mix(vec3(0.42, 0.55, 0.40), vec3(1.05, 1.12, 0.72), clump) * (0.55 + 0.8 * n.a);
+        // Shadowed gaps between the clusters.
+        leaf *= mix(0.56, 1.1, smoothstep(0.28, 0.62, cl.g * 0.65 + cl.a * 0.35));
         vec3 plain = vColor;
         vec3 albedo = plain;
         albedo = mix(albedo, rock, isRock);
@@ -218,8 +225,10 @@ function makeTerrainMaterial(sky, noiseMap) {
 
         float isPlain = step(0.5, kind) * (1.0 - step(1.5, kind));
         float ndl = max(dot(N, sunDir), 0.0);
-        // Leaves: rounder than their facets. Painted props: soft, like inflatables.
-        float ndlLeaf = max(dot(normalize(N * 0.3 + normalize(vRound) + vec3(0.0, 0.3, 0.0)), sunDir), 0.0) * 0.8 + 0.2;
+        // Leaves: a round clump whose clusters catch the light this way and
+        // that, hardly a facet. Painted props: soft, like inflatables.
+        vec3 Nl = normalize(normalize(vRound) + vec3(0.0, 0.3, 0.0) + N * 0.1 + (vec3(cl.r, cl.a, cl.g) - 0.5) * 0.85);
+        float ndlLeaf = max(dot(Nl, sunDir), 0.0) * 0.8 + 0.2;
         ndl = mix(ndl, ndlLeaf, isLeaf);
         ndl = mix(ndl, max(dot(N, sunDir) * 0.6 + 0.4, 0.0), isPlain);
         vec3 light = sunLight * ndl * vBake.x
@@ -830,9 +839,22 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
 
   // ---------- plants ----------
 
-  // Bushes: squashed, jittered icosahedra in three greens.
+  // Bushes: squashed, lumpy icosahedra in a few greens. The 60 face corners
+  // of an icosahedron share 12 points; each point gets one jitter, so a bush
+  // stays a closed clump instead of breaking into shards.
   {
     const ico = new THREE.IcosahedronGeometry(1, 0);
+    const icoPoint = [], icoFirst = [];
+    {
+      const seen = [], q = ico.attributes.position, v = new THREE.Vector3();
+      for (let i = 0; i < q.count; i++) {
+        v.fromBufferAttribute(q, i);
+        let k = seen.findIndex((o) => o.distanceToSquared(v) < 1e-6);
+        if (k < 0) { k = seen.length; seen.push(v.clone()); icoFirst.push(i); }
+        icoPoint.push(k);
+      }
+    }
+    const jitter = new Float32Array(ico.attributes.position.count);
     const greens = [C(0x2a5f20), C(0x357a28), C(0x4a8a2e), C(0x23501f), C(0x5a8f33)];
     const hill = lagoonIsle;
     // The lagoon island's jungle, between the beach and the rock.
@@ -844,7 +866,8 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
     for (const [x, y, z, s] of leafSpots) {
       const g = greens[Math.floor(rnd() * greens.length)];
       const m = M4(x, y + s * 0.25, z, rnd() * 6, s * (0.9 + rnd() * 0.5), s * (0.6 + rnd() * 0.3), s * (0.9 + rnd() * 0.5), rnd() * 0.5, rnd() * 0.5);
-      deco.add(ico, m, g, 2, (v, c) => { v.multiplyScalar(0.82 + 0.36 * rnd()); c.multiplyScalar(0.75 + 0.5 * (v.y * 0.5 + 0.5)); });
+      for (let i = 0; i < jitter.length; i++) jitter[i] = 0.76 + 0.5 * rnd();
+      deco.add(ico, m, g, 2, (v, c, i) => { v.multiplyScalar(jitter[icoFirst[icoPoint[i]]]); c.multiplyScalar(0.75 + 0.5 * (v.y * 0.5 + 0.5)); });
     }
   }
 
