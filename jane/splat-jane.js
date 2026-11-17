@@ -22,12 +22,14 @@ import { SplatMesh, dyno } from '@sparkjsdev/spark';
 // Measured on the files (see jane-splat/main.js): scan height feet to head,
 // feet height, and the body's vertical axis, all in scan units (y down).
 // All are Postshot's anti-aliased model, so Spark needs its 0.1 filter.
-// The singing scan (Ilia, Nov 17) came out about 8% larger in its units than
-// the other two, so its own height scales it to the same 1.75 m.
+// The singing scan (Ilia, Nov 17) came out about 10% larger in its units than
+// the other two (measured on her shirt logo, which is the same size in both
+// of those), so its height is 1.634 x 1.10. She stands with her feet apart in
+// it, which puts the top of her head at 1.72 m instead of 1.75.
 export const JANE_SCANS = {
   surf: { url: './assets/jane/surf-150k.sog', height: 1.634, feetY: -0.065, cx: -0.003, cz: -0.19, aa: true },
   new: { url: './assets/jane/new-150k.sog', height: 1.634, feetY: -0.07, cx: -0.092, cz: -0.147, aa: true },
-  sing: { url: './assets/jane/sing-150k.sog', height: 1.765, feetY: -0.065, cx: -0.098, cz: -0.193, aa: true },
+  sing: { url: './assets/jane/sing-150k.sog', height: 1.80, feetY: -0.065, cx: -0.098, cz: -0.193, aa: true },
 };
 
 const FORM_SEC = 2.2;   // first appearance

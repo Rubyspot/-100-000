@@ -153,9 +153,10 @@ const PLACEHOLDER = [
 const URLS = (params.get('urls') || '').split(',').map((s) => s.trim()).filter(Boolean);
 // Surfboard Jane: same Postshot units as NEW (feet at about -0.1).
 const SCAN_SURF = { height: 1.634, feetY: -0.065, cx: -0.003, cz: -0.19, yaw: 0, aa: true };
-// Singing Jane (Nov 17): feet where surf's are, but her head is 1.83 units up
-// (NEW's and surf's 1.70), so this scan's units are about 8% larger.
-const SCAN_SING = { height: 1.765, feetY: -0.065, cx: -0.098, cz: -0.193, yaw: 0, aa: true };
+// Singing Jane (Nov 17): this scan's units are about 10% larger than NEW's
+// and surf's (her shirt logo is 0.079 wide here, 0.070 in both of those), so
+// its height is 1.634 x 1.10. Her feet are apart, so her head tops out at 1.72 m.
+const SCAN_SING = { height: 1.80, feetY: -0.065, cx: -0.098, cz: -0.193, yaw: 0, aa: true };
 // Sets with a single scan, and their start card.
 const SINGLE = {
   surf: { scan: SCAN_SURF, title: 'Surf Jane splat test', sub: 'Jane with the surfboard in the room scan, with a live performance readout. Pick her splat count and the room\'s below.' },
