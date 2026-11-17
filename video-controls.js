@@ -1,30 +1,21 @@
 // Palm-sized controls for the 180° video: back 10 s, pause / play, close.
 // Three round buttons, 8.4 cm across, stand on a dark glass plate within arm's
-// reach, low enough to stay out of the picture. Press one with a fingertip
-// (hand tracking), or point a controller or a pinching hand at it and pull the
-// trigger / pinch. The plate also shows how far the video has played.
-//
-// They get out of the way: two seconds after the last time they were used
-// the plate fades out, and it comes back when the viewer lifts an open hand
-// (pulls a trigger, pinches, or moves the mouse), below wherever they are
-// facing by then. It stays while the video is paused or has no picture yet.
+// reach, at the lower edge of the picture: under its middle, about 35 degrees
+// below eye level, so they show at the bottom of the view while the viewer
+// looks ahead. They stay there for the whole video (Ilia, Nov 17). Press one
+// with a fingertip (hand tracking), or point a controller or a pinching hand
+// at it and pull the trigger / pinch. The plate also shows how far the video
+// has played.
 import * as THREE from 'three';
 
 const R = 0.042;           // button radius: 8.4 cm across, about a palm
 const GAP = 0.118;         // button centre to centre
 const DEPTH = 0.016;       // button thickness
 const HIT_R = 0.058;       // hit radius, a little bigger than the button
-const PLATE_W = 0.4, PLATE_H = 0.2;
-const BTN_Y = 0.011;       // button centres, plate coordinates (y up from its middle)
-const LABEL_Y = -0.055, BAR_Y = 0.075, HINT_Y = -0.083;
+const PLATE_W = 0.4, PLATE_H = 0.16;
+const BTN_Y = -0.004;      // button centres, plate coordinates (y up from its middle)
+const LABEL_Y = -0.063, BAR_Y = 0.056;
 const GOLD = '#f2c45a';
-const HIDE_AFTER = 2;      // seconds the plate stays once nobody is using it
-// How to bring the plate back, by what the viewer has in their hands.
-const HINTS = {
-  hand: 'Hides in 2 s. Lift an open hand to bring it back.',
-  controller: 'Hides in 2 s. Pull the trigger to bring it back.',
-  screen: 'Hides in 2 s. Move the mouse to bring it back.',
-};
 
 // Additive glow that leaves alpha alone (see GLOW_BLEND in main.js).
 const GLOW = {
@@ -110,17 +101,16 @@ function drawPlate(g, w, h, st = {}) {
     g.fillStyle = st.hover === i ? GOLD : 'rgba(255, 255, 255, 0.82)';
     g.fillText(text, w / 2 + (i - 1) * GAP * px, h / 2 - LABEL_Y * px);
   });
-  // How to get the plate back once it has hidden.
-  g.font = '500 29px system-ui, sans-serif';
-  g.fillStyle = 'rgba(255, 255, 255, 0.5)';
-  g.fillText(HINTS[st.input] || HINTS.hand, w / 2, h / 2 - HINT_Y * px);
 }
 
 export class VideoControls {
   // onBack / onToggle / onClose are called when a button is pressed.
-  constructor({ scene, listener, onBack, onToggle, onClose }) {
+  // below / ahead: where the plate's middle sits in the headset, metres under
+  // the eyes and in front of them.
+  constructor({ scene, listener, onBack, onToggle, onClose, below = 0.3, ahead = 0.43 }) {
     this.actions = [onBack, onToggle, onClose];
-    // root: on while a video plays. body: the plate and buttons, off while faded out.
+    this.spot = { below, ahead };
+    // root: on while a video plays. body: the plate and buttons.
     this.root = new THREE.Group();
     this.root.visible = false;
     scene.add(this.root);
@@ -163,9 +153,8 @@ export class VideoControls {
     });
 
     this.click = this.makeClick();
-    this.state = { hover: -1, paused: false, time: 0, duration: 0, label: '', input: 'hand', drawn: '' };
+    this.state = { hover: -1, paused: false, time: 0, duration: 0, label: '', drawn: '' };
     this.opacity = 0;
-    this.awakeUntil = 0; // the plate shows until then
     this.xr = true;
     this.cooldownUntil = 0;
     this.lastTips = new Map();
@@ -182,31 +171,31 @@ export class VideoControls {
     return buf;
   }
 
-  // head: the viewer's head (camera) object. In the headset the plate sits
-  // about 45 degrees below eye level within reach, under the picture; on a
-  // flat screen higher up, so it is on the screen.
-  show(head, xr = true) {
+  // head: the viewer's head (camera) object. forward: the direction the
+  // picture faces (world space); without it, the way the head faces. In the
+  // headset the plate sits under the middle of the picture within reach; on
+  // a flat screen further out, so it is on the screen.
+  show(head, xr = true, forward = null) {
     this.xr = xr;
-    this.place(head);
+    this.place(head, forward);
     this.root.visible = true;
     this.opacity = 0;
-    this.awakeUntil = this.now + HIDE_AFTER;
   }
 
-  // Put the plate below where the viewer is facing now, turned toward them.
-  place(head) {
+  // Put the plate below the eyes along `forward`, turned toward the viewer.
+  place(head, forward = null) {
     head.updateMatrixWorld(true);
     const pos = new THREE.Vector3().setFromMatrixPosition(head.matrixWorld);
-    const fwd = new THREE.Vector3(0, 0, -1).transformDirection(head.matrixWorld);
+    const fwd = forward ? forward.clone() : new THREE.Vector3(0, 0, -1).transformDirection(head.matrixWorld);
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
     fwd.normalize();
-    const [ahead, below] = this.xr ? [0.42, 0.4] : [0.62, 0.26];
+    const { ahead, below } = this.xr ? this.spot : { ahead: 0.62, below: 0.26 };
     this.root.position.copy(pos).addScaledVector(fwd, ahead);
     this.root.position.y -= below;
     this.root.lookAt(pos);
     this.root.updateMatrixWorld(true);
-    this.cooldownUntil = this.now + 0.6; // ignore the finger that just touched the play ball, or the hand held up
+    this.cooldownUntil = this.now + 0.6; // ignore the finger that just touched the play ball
     this.lastTips.clear();
   }
 
@@ -215,11 +204,8 @@ export class VideoControls {
     this.setHover(-1);
   }
 
-  // Keep the plate up for a while longer (or bring it back).
-  wake(seconds = HIDE_AFTER) { this.awakeUntil = Math.max(this.awakeUntil, this.now + seconds); }
-
   // visible: a video is playing and the controls are there for it.
-  // shown: the plate is up, not faded out.
+  // shown: the plate has faded in.
   get visible() { return this.root.visible; }
   get shown() { return this.root.visible && this.opacity > 0.6; }
 
@@ -239,12 +225,9 @@ export class VideoControls {
     return { index: -1, distance, near };
   }
 
-  // A trigger pull, pinch or click along a ray. Returns true if it pressed a
-  // button. While the plate is hidden it only brings it back.
+  // A trigger pull, pinch or click along a ray. Returns true if it pressed a button.
   pressRay(ray) {
     if (!this.root.visible) return false;
-    if (!this.shown) { this.wake(); return false; }
-    this.wake();
     const hit = this.hitRay(ray);
     if (hit.index < 0) return false;
     this.press(hit.index);
@@ -253,7 +236,6 @@ export class VideoControls {
 
   press(i) {
     if (this.now < this.cooldownUntil || !this.shown) return;
-    this.wake();
     this.cooldownUntil = this.now + 0.35;
     this.buttons[i].pressT = this.now;
     if (this.ctx.state === 'running') {
@@ -275,27 +257,17 @@ export class VideoControls {
   }
 
   // fingertips: world positions of index fingertips. rayHits: results of
-  // hitRay for the pointing controllers this frame. head: the camera.
-  // lifted: the viewer is holding an open hand up. waiting: the video has no
-  // picture yet. input: 'hand', 'controller' or 'screen', for the hint on
-  // the plate.
-  update(t, dt, { fingertips = [], rayHits = [], head, lifted = false, waiting = false, input = 'hand', paused = false, time = 0, duration = 0, label = '' }) {
+  // hitRay for the pointing controllers this frame.
+  update(t, dt, { fingertips = [], rayHits = [], paused = false, time = 0, duration = 0, label = '' }) {
     this.now = t;
     if (!this.root.visible) return;
-    // These bring the plate back and keep it up.
-    if (paused || waiting || lifted) this.wake();
-    // Coming back from being away: under wherever the viewer faces by now.
-    if (head && this.opacity === 0 && t < this.awakeUntil) this.place(head);
-    // near: someone is at the plate, which keeps it up while it is up but
-    // doesn't bring it back (a hand resting in a lap is near it too).
-    let hover = -1, near = false;
+    let hover = -1;
     // Fingertip pokes: press when a tip crosses into a button's face from the front.
     const inv = new THREE.Matrix4().copy(this.root.matrixWorld).invert();
     const seen = new Set();
     fingertips.forEach((tip, k) => {
       const p = tip.clone().applyMatrix4(inv);
       seen.add(k);
-      if (Math.abs(p.x) < PLATE_W / 2 + 0.15 && Math.abs(p.y) < PLATE_H / 2 + 0.15 && p.z < 0.25 && p.z > -0.1) near = true;
       for (let i = 0; i < 3; i++) {
         const r = Math.hypot(p.x - (i - 1) * GAP, p.y - BTN_Y);
         if (r > HIT_R) continue;
@@ -307,25 +279,12 @@ export class VideoControls {
       this.lastTips.set(k, p.z);
     });
     for (const k of [...this.lastTips.keys()]) if (!seen.has(k)) this.lastTips.delete(k);
-    for (const h of rayHits) {
-      if (h.near) near = true;
-      if (h.index >= 0) hover = h.index;
-    }
-    // Looking down at the plate keeps it too (in the headset; a screen's view doesn't turn).
-    if (head && this.xr) {
-      const hp = new THREE.Vector3().setFromMatrixPosition(head.matrixWorld);
-      const look = new THREE.Vector3(0, 0, -1).transformDirection(head.matrixWorld);
-      const to = this.root.position.clone().sub(hp).normalize();
-      if (look.dot(to) > Math.cos(THREE.MathUtils.degToRad(24))) near = true;
-    }
-    if (near && this.opacity > 0.5) this.wake();
-    const up = t < this.awakeUntil;
-    this.setHover(up ? hover : -1);
+    for (const h of rayHits) if (h.index >= 0) hover = h.index;
+    this.setHover(hover);
 
-    // Fade in and out; nothing is drawn while it is away.
-    this.opacity += ((up ? 1 : 0) - this.opacity) * Math.min(1, dt * 8);
-    if (!up && this.opacity < 0.01) this.opacity = 0;
-    this.body.visible = this.opacity > 0;
+    // Fades in when the video starts.
+    this.opacity += (1 - this.opacity) * Math.min(1, dt * 8);
+    if (this.opacity > 0.995) this.opacity = 1;
     this.plateMat.opacity = this.opacity;
     this.buttons.forEach((b) => {
       b.bodyMat.opacity = b.faceMat.opacity = this.opacity;
@@ -335,11 +294,9 @@ export class VideoControls {
       b.group.scale.setScalar(b.halo.visible ? 1.06 : 1);
     });
 
-    // Redraw the plate only when what it shows changes (and it can be seen).
-    if (!this.body.visible) return;
+    // Redraw the plate only when what it shows changes.
     this.state.paused = paused; this.state.time = time; this.state.duration = duration; this.state.label = label;
-    this.state.input = input;
-    const key = `${this.state.hover}|${paused}|${Math.floor(time)}|${Math.floor(duration)}|${label}|${input}`;
+    const key = `${this.state.hover}|${paused}|${Math.floor(time)}|${Math.floor(duration)}|${label}`;
     if (key !== this.state.drawn) {
       this.state.drawn = key;
       this.plateTex.userData.redraw(this.state);

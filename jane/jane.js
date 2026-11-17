@@ -5,7 +5,9 @@
 //   scene:video-end   -> she's back, chats, offers the jetski ride: a toy
 //                        jetski floats in front of the player, touching it starts
 //                        the race (api.startJetski, in this same session)
-//   scene:jetski-end  -> back in the room, she reacts to the result
+//   scene:jetski-end  -> back in the room, she reacts to the result; the toy
+//                        jetski comes back with the video's play ball beside
+//                        it, so the guest can ride again or watch again
 //
 // Live mode talks through an ElevenLabs agent (speech-to-text, LLM and her
 // voice, all streamed, so she starts answering the moment you stop talking).
@@ -54,6 +56,18 @@ export function createJane(api) {
     jetskiBtn.position.copy(head).addScaledVector(dir, flat ? 0.8 : 0.52);
     jetskiBtn.position.y = Math.max(0.55, head.y - (flat ? 0.14 : 0.3));
     jetskiBtn.userData.show();
+    // Back from a ride: the video can be played again from right beside it.
+    if (st.phase === 'back') showVideoBall();
+  }
+  // The play ball: beside the toy jetski when that is up (on its left, Jane
+  // stands to the right), otherwise at its own spot ahead of the guest.
+  function showVideoBall() {
+    if (!api.showPlayBall) return;
+    if (!jetskiBtn.visible) { api.showPlayBall(true); return; }
+    const head = headWorld();
+    const dir = jetskiBtn.position.clone().sub(head).setY(0).normalize();
+    const left = new THREE.Vector3(dir.z, 0, -dir.x);
+    api.showPlayBall(true, jetskiBtn.position.clone().addScaledVector(left, renderer.xr.isPresenting ? 0.36 : 0.42));
   }
 
   const st = {
@@ -97,7 +111,7 @@ export function createJane(api) {
       setTimeout(() => api.playVideo && api.playVideo(), 2500); // let her finish the sentence
       return 'The video is starting now. Stop talking; you will continue after it ends.';
     },
-    show_video_button: () => { api.showPlayBall && api.showPlayBall(true); return 'The play button is floating in front of the guest.'; },
+    show_video_button: () => { showVideoBall(); return 'The play button is floating in front of the guest.'; },
     start_jetski: () => { setTimeout(() => goJetski('agent'), 3500); return 'Loading the jetski race now. Say a quick see-you-on-the-water.'; },
     show_jetski_button: () => { showJetski(); return 'The little toy jetski is floating in front of the guest. Touching it starts the race.'; },
     gesture: ({ name } = {}) => { avatar.gesture(name, st.t); return 'ok'; },

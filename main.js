@@ -3,12 +3,13 @@
 // entrance, a seagull comes out and settles on the bottom of its rim. A $100
 // bill flutters down from the ceiling to it, the gull jumps up, catches it and
 // flies back in, and the player flies through the portal into the room scan.
-// Jane forms out of particles there and goes through her poses, 10 s each
-// (surfboard, shaka, then singing into a microphone), and the play ball starts
-// the 180 video, with palm-sized controls (back 10 s, pause, close) within
-// reach while it plays. After the video Jane offers the jetski race: a toy
+// Jane is there already, and goes through her poses, 3 s each (yoga, surf,
+// singing, heart). The play ball starts the 180 video, with palm-sized
+// controls (back 10 s, pause, close) at the lower edge of the picture while
+// it plays. After the video Jane offers the jetski race: a toy
 // jetski floats in front of the player, and touching it starts the race
-// (jetski/race.js) right here, in the same session.
+// (jetski/race.js) right here, in the same session. Back from the race, the
+// video's play ball floats beside the jetski.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
@@ -281,6 +282,26 @@ const sky = new THREE.Mesh(skyGeo, maskToPortal(new THREE.MeshBasicMaterial({
 sky.renderOrder = -50;
 worldRoot.add(sky);
 
+// Outside the room: a 360 photo of a tropical island all round, in place of
+// the plain sky (Ilia, Nov 17: "so it's not just black"). Until his photo
+// comes, assets/outside.jpg is a 360 view of the race's lagoon from its start
+// beach, the lagoon ahead. Any 2:1 equirectangular JPEG or PNG works:
+// ?outside=<url> tries another, ?outside=off keeps the plain sky, and
+// ?outsideturn=<degrees> turns it. It is in before the Start buttons unlock.
+const OUTSIDE_URL = params.get('outside') || './assets/outside.jpg';
+const outsideReady = OUTSIDE_URL === 'off' ? Promise.resolve() : new THREE.TextureLoader().loadAsync(OUTSIDE_URL).then((tex) => {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  renderer.initTexture(tex);
+  const geo = new THREE.SphereGeometry(60, 64, 32);
+  geo.scale(-1, 1, 1); // seen from inside without being mirrored
+  sky.geometry.dispose();
+  sky.geometry = geo;
+  Object.assign(sky.material, { map: tex, vertexColors: false, side: THREE.FrontSide, toneMapped: false });
+  sky.material.needsUpdate = true;
+  sky.position.y = 1.5; // its horizon at eye height
+  sky.rotation.y = THREE.MathUtils.degToRad(num('outsideturn', 0));
+}).catch(() => console.info(`outside: no ${OUTSIDE_URL}, the plain sky stays`));
+
 maskToPortal(spark.material);
 
 const room = new SplatMesh({
@@ -296,15 +317,20 @@ scanGroup.add(room);
 
 // Jane's splats stand in the room at JANE_SPOT, turned toward the point where
 // the flight ends (jane/splat-jane.js has the particle transformation).
-// Scan (x, z) is (x, -z) in scanGroup. On arrival she goes through her poses
-// in order (?poses=surf,new,sing; ?hold=10 seconds each) and stays on the
-// last until the video. After it she comes back in the shaka pose (new),
-// the one she talks in, or the last pose if that one isn't in the list.
+// Scan (x, z) is (x, -z) in scanGroup. Ilia's five poses (Nov 17): she is
+// already in the room in the first one while the player flies in (yoga),
+// goes through the next ones on arrival, ?hold=3 seconds each (surf, sing,
+// heart), and stays on the last while she offers the video. After the video
+// she forms again in the jetski pose, offering the race. ?poses=yoga,surf,
+// sing,heart and ?after=jetski change them (also: new, the shaka pose). A
+// pose whose file isn't in assets/jane/ yet is skipped.
 const ARRIVAL_SCAN = TARGET.at.clone().addScaledVector(FLY_DIR, -TARGET.stop);
-const JANE_POSES = (() => {
-  const list = (params.get('poses') || '').split(',').map((s) => s.trim()).filter((k) => JANE_SCANS[k]);
-  return list.length ? list : ['surf', 'new', 'sing'];
-})();
+const poseList = (name, def) => {
+  const list = (params.get(name) || '').split(',').map((s) => s.trim()).filter((k) => JANE_SCANS[k]);
+  return list.length ? list : def;
+};
+const JANE_POSES = poseList('poses', ['yoga', 'surf', 'sing', 'heart']);
+const JANE_AFTER = poseList('after', ['jetski'])[0];
 const splatJane = params.get('jane') === 'off' ? null : createSplatJane({
   parent: scanGroup,
   spot: new THREE.Vector3(JANE_SPOT.x, 0, -JANE_SPOT.y),
@@ -312,14 +338,15 @@ const splatJane = params.get('jane') === 'off' ? null : createSplatJane({
   spark,
   height: num('height', 1.75),
   sparks: num('sparks', 0.35), // share of splats that fly as sparks in her transformation
-  hold: Math.max(1, num('hold', 10)),
-  scans: JANE_POSES.map((k) => JANE_SCANS[k]),
+  hold: Math.max(0.5, num('hold', 3)),
+  morph: Math.max(0.5, num('morph', 2)),
+  scans: [...JANE_POSES, JANE_AFTER].map((k) => JANE_SCANS[k]),
+  chainEnd: JANE_POSES.length - 1,
 });
 if (splatJane) {
-  const afterVideo = JANE_POSES.includes('new') ? JANE_POSES.indexOf('new') : JANE_POSES.length - 1;
-  addEventListener('scene:arrived', () => splatJane.appear(0, true));
+  addEventListener('scene:arrived', () => splatJane.chain());
   addEventListener('scene:video-start', () => splatJane.hide());
-  addEventListener('scene:video-end', () => splatJane.appear(afterVideo, false));
+  addEventListener('scene:video-end', () => splatJane.appear(JANE_POSES.length, false));
 }
 
 // A plain room stands in for passthrough when previewing on a flat screen.
@@ -345,37 +372,43 @@ const fakeRoom = new THREE.Group();
 
 // ---------- $100 bill ----------
 
-function makeBillTexture() {
-  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 436;
-  const g = cv.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 1024, 436);
-  grad.addColorStop(0, '#d9e3cf'); grad.addColorStop(0.5, '#c4d6b8'); grad.addColorStop(1, '#d5dcc4');
-  g.fillStyle = grad; g.fillRect(0, 0, 1024, 436);
-  g.strokeStyle = '#3f6b4a'; g.lineWidth = 14; g.strokeRect(18, 18, 988, 400);
-  g.lineWidth = 4; g.strokeRect(40, 40, 944, 356);
-  g.fillStyle = '#e9e2cf'; g.beginPath(); g.ellipse(512, 218, 120, 150, 0, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = '#3f6b4a'; g.lineWidth = 6; g.stroke();
-  g.fillStyle = '#3f6b4a';
-  g.font = 'bold 150px Georgia, serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('$', 512, 222);
-  g.font = 'bold 92px Georgia, serif';
-  g.fillText('100', 140, 110); g.fillText('100', 884, 330);
-  g.font = 'bold 70px Georgia, serif'; g.fillStyle = '#c9a646';
-  g.fillText('100', 884, 110);
-  g.fillStyle = '#3f6b4a'; g.font = 'bold 34px Georgia, serif';
-  g.fillText('ONE HUNDRED', 512, 395);
-  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
-  return t;
+// Ilia's twisted bill mesh (assets/seagull/bill.glb, from his FBX) wearing his
+// photo of a real $100 note (Nov 17). It lies in the XY plane facing +Z, like
+// a sheet of paper. Its UVs spread the whole image over each face, mirrored
+// on the back, so each face is pointed at its half of bill-100.jpg here: the
+// front of the note on top, the back below, both upright.
+function mapBillFaces(geometry) {
+  const g = geometry.index ? geometry.toNonIndexed() : geometry;
+  const pos = g.attributes.position, uv = g.attributes.uv;
+  g.computeBoundingBox();
+  const { min, max } = g.boundingBox;
+  const across = (i) => (pos.getX(i) - min.x) / (max.x - min.x); // 0 at one end of the note, 1 at the other
+  for (let i = 0; i < pos.count; i += 3) {
+    let front = 0, back = 0;
+    for (let k = i; k < i + 3; k++) {
+      front = Math.max(front, Math.abs(uv.getX(k) - across(k)));
+      back = Math.max(back, Math.abs(uv.getX(k) - (1 - across(k))));
+    }
+    for (let k = i; k < i + 3; k++) {
+      if (front < 0.02) uv.setY(k, 0.5 + 0.5 * uv.getY(k));
+      else if (back < 0.02) uv.setY(k, 0.5 * uv.getY(k));
+      else uv.setXY(k, 0.003, 0.75); // the thin edges: paper from the margin
+    }
+  }
+  uv.needsUpdate = true;
+  return g;
 }
-// Ilia's twisted bill mesh (assets/seagull/bill.glb, from his FBX) wearing the
-// drawn $100 face. It lies in the XY plane facing +Z, like a sheet of paper.
+const billTexture = new THREE.TextureLoader().load('./assets/seagull/bill-100.jpg');
+billTexture.colorSpace = THREE.SRGBColorSpace;
+billTexture.anisotropy = 4;
 const gltfLoader = new GLTFLoader();
 const bill = new THREE.Group();
-const billMaterial = new THREE.MeshBasicMaterial({ map: makeBillTexture(), side: THREE.DoubleSide });
+const billMaterial = new THREE.MeshBasicMaterial({ map: billTexture, side: THREE.DoubleSide });
 anchor.add(bill);
 const billReady = gltfLoader.loadAsync('./assets/seagull/bill.glb').then((gltf) => {
   let mesh = null;
   gltf.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+  mesh.geometry = mapBillFaces(mesh.geometry);
   mesh.material = billMaterial;
   // The model is 773.7 units long. A real bill is 15.6 cm; it's drawn 1.3x
   // (20.3 cm) so it reads at arm's length, centred on its twist.
@@ -498,12 +531,14 @@ const gullReady = gltfLoader.loadAsync('./assets/seagull/seagull.glb').then((glt
 });
 
 const gullVoice = new GullVoice(listener, gull);
-// Wing beats per second; the clip's own pace is 2.5.
-const BEAT = 2.2, BEAT_HOVER = 2.8;
+// Wing beats per second; the clip's own pace is 2.5. BEAT_HOVER: braking to
+// land and taking off, when a gull beats harder and faster.
+const BEAT = 2.2, BEAT_HOVER = 3.1;
 const JAW_SIGN = -1; // which way round the mandible bone opens the beak
 // strength: 1 full wing beats, 0 gliding with the wings level.
 // perch: 1 sitting (standing legs, folded wings), blending in from flight.
-// sound: whoosh on each downstroke.
+// sound: a soft rustle on the hard downstrokes of landing and take-off (a
+// gull cruising is all but silent).
 function poseGull(dt, strength, beat = BEAT, perch = 0, sound = true) {
   const u = gull.userData;
   if (!u.mixer) return;
@@ -511,8 +546,9 @@ function poseGull(dt, strength, beat = BEAT, perch = 0, sound = true) {
   const w = clamp01(perch), s = clamp01(strength);
   const before = Math.floor(u.phase - 0.05);
   u.phase += dt * beat * (1 - w);
-  // One whoosh per downstroke (the beat starts with the wings up).
-  if (sound && Math.floor(u.phase - 0.05) !== before && s > 0.3 && w < 0.5) gullVoice.flap(s);
+  u.flapS = s * (1 - w);
+  // On the downstroke (the beat starts with the wings up).
+  if (sound && Math.floor(u.phase - 0.05) !== before && s > 0.85 && beat > BEAT + 0.3 && w < 0.5) gullVoice.flap(s);
   // Whatever weight flight doesn't take goes to the rest pose (standing).
   u.fly.setEffectiveWeight(s * (1 - w));
   u.glide.setEffectiveWeight((1 - s) * (1 - w));
@@ -566,44 +602,14 @@ rig.add(handMesh);
 const fingertips = [];
 const tmpMat = new THREE.Matrix4(), tmpPos = new THREE.Vector3(), tmpQuat = new THREE.Quaternion(), tmpScale = new THREE.Vector3();
 
-// An open hand held up brings the video controls back (video-controls.js).
-// Up: the palm less than LIFT_BELOW metres under the eyes, which is above
-// where hands rest in a lap or on armrests, and in front of the body. Open:
-// at least three of the four fingers straight. ?lift=0.3 sets the height.
-const LIFT_BELOW = num('lift', 0.3);
-const lift = { up: false, since: 0, lost: 0, hands: false };
-const J = Object.fromEntries(JOINTS.map((name, i) => [name, i]));
-const FINGERS = ['index', 'middle', 'ring', 'pinky'].map((f) => [
-  J[`${f}-finger-phalanx-proximal`], J[`${f}-finger-phalanx-intermediate`], J[`${f}-finger-phalanx-distal`], J[`${f}-finger-tip`]]);
-const jointAt = JOINTS.map(() => new THREE.Vector3()); // world positions of the hand being read
-const headAt = new THREE.Vector3(), headFwd = new THREE.Vector3(), palmAt = new THREE.Vector3();
-function handLifted() {
-  // The middle of the palm: halfway from the wrist to the knuckles.
-  palmAt.addVectors(jointAt[FINGERS[0][0]], jointAt[FINGERS[3][0]]).multiplyScalar(0.25).addScaledVector(jointAt[J.wrist], 0.5);
-  if (palmAt.y < headAt.y - LIFT_BELOW || palmAt.sub(headAt).dot(headFwd) < 0.1) return false;
-  let straight = 0;
-  for (const [a, b, c, tip] of FINGERS) {
-    const chain = jointAt[a].distanceTo(jointAt[b]) + jointAt[b].distanceTo(jointAt[c]) + jointAt[c].distanceTo(jointAt[tip]);
-    if (chain > 0 && jointAt[a].distanceTo(jointAt[tip]) / chain > 0.9) straight += 1;
-  }
-  return straight >= 3;
-}
-
 function updateHands(frame) {
   const session = renderer.xr.getSession();
   const ref = renderer.xr.getReferenceSpace();
-  let n = 0, hands = false, lifted = false;
+  let n = 0;
   fingertips.length = 0;
   if (session && frame && ref && frame.getJointPose) {
-    const head = renderer.xr.getCamera();
-    headAt.setFromMatrixPosition(head.matrixWorld);
-    headFwd.set(0, 0, -1).transformDirection(head.matrixWorld).setY(0);
-    if (headFwd.lengthSq() < 1e-6) headFwd.set(0, 0, -1);
-    headFwd.normalize();
     for (const src of session.inputSources) {
       if (!src.hand) continue;
-      hands = true;
-      let seen = 0;
       for (let j = 0; j < JOINTS.length; j++) {
         const space = src.hand.get(JOINTS[j]);
         const pose = space && frame.getJointPose(space, ref);
@@ -612,29 +618,13 @@ function updateHands(frame) {
         tmpPos.set(p.x, p.y, p.z); tmpQuat.set(o.x, o.y, o.z, o.w);
         tmpScale.setScalar(Math.max(0.006, pose.radius || 0.008));
         handMesh.setMatrixAt(n++, tmpMat.compose(tmpPos, tmpQuat, tmpScale));
-        jointAt[j].copy(tmpPos).applyMatrix4(rig.matrixWorld);
-        seen += 1;
-        if (JOINTS[j] === 'index-finger-tip') fingertips.push(jointAt[j].clone());
+        if (JOINTS[j] === 'index-finger-tip') fingertips.push(tmpPos.clone().applyMatrix4(rig.matrixWorld));
       }
-      if (seen === JOINTS.length && handLifted()) lifted = true;
     }
   }
   handMesh.count = n;
   handMesh.instanceMatrix.needsUpdate = true;
-  // Held for a moment before it counts, and for a moment after it is lost.
-  const t = clock.now;
-  if (lifted) {
-    if (!lift.since) lift.since = t;
-    lift.lost = 0;
-    if (t - lift.since > 0.15) lift.up = true;
-  } else {
-    lift.since = 0;
-    if (lift.up && !lift.lost) lift.lost = t;
-    if (!lift.up || t - lift.lost > 0.25) { lift.up = false; lift.lost = 0; }
-  }
-  lift.hands = hands;
 }
-window.__hands = { lift, update: updateHands }; // test hook
 
 // Controller rays, drawn only while they point at the video controls.
 const pointers = [0, 1].map((i) => {
@@ -702,15 +692,17 @@ if (params.get('preload') !== '0') {
   });
   Promise.allSettled([unlocked, splatJane?.ready]).then(() => video.preload());
 }
-// Back 10 s, pause / play and close, within reach while the video plays.
+// Back 10 s, pause / play and close, within reach at the lower edge of the
+// picture for as long as the video plays. ?controls=0.3,0.43: how far below
+// and ahead of the eyes the plate's middle is, metres.
+const CONTROLS_AT = (params.get('controls') || '').split(',').map(parseFloat);
 const videoControls = new VideoControls({
   scene, listener,
   onBack: () => video.seekBy(-10),
   onToggle: () => video.togglePause(),
   onClose: () => video.stop(),
+  ...(CONTROLS_AT.length === 2 && CONTROLS_AT.every(Number.isFinite) ? { below: CONTROLS_AT[0], ahead: CONTROLS_AT[1] } : {}),
 });
-// On a flat screen, moving the mouse brings them back.
-renderer.domElement.addEventListener('pointermove', () => { if (!renderer.xr.isPresenting) videoControls.wake(); });
 
 const playBall = new THREE.Group();
 {
@@ -741,7 +733,8 @@ const playBall = new THREE.Group();
       }`,
   }));
   iconPivot.add(halo);
-  playBall.userData = { ball, iconPivot, pressedAt: -1 };
+  // base: where it floats (anchor space); null for its own spot past the end of the flight.
+  playBall.userData = { ball, iconPivot, pressedAt: -1, base: null };
   playBall.visible = false;
   anchor.add(playBall);
 }
@@ -767,7 +760,9 @@ function startVideo() {
   setTimeout(() => {
     worldRoot.visible = spark.visible = false;
     playBall.visible = false;
-    videoControls.show(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera, renderer.xr.isPresenting);
+    // Under the middle of the picture, which faces the way the room does.
+    videoControls.show(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera, renderer.xr.isPresenting,
+      new THREE.Vector3(0, 0, -1).applyQuaternion(pose.quaternion));
     window.dispatchEvent(new Event('scene:video-start'));
     video.play(pose, rig).catch((err) => {
       console.warn('Video failed:', err);
@@ -779,9 +774,7 @@ function startVideo() {
 video.onEnded = () => {
   videoControls.hide();
   worldRoot.visible = spark.visible = true;
-  playBall.visible = sceneApi.autoPlayBall;
-  playBall.userData.pressedAt = -1;
-  hint.visible = sceneApi.autoPlayBall;
+  showPlayBall(sceneApi.autoPlayBall);
   window.dispatchEvent(new Event('scene:video-end'));
 };
 
@@ -827,8 +820,8 @@ camera.add(fpsLabel);
 // ---------- timeline ----------
 
 const T_PORTAL = 0.6;      // portal opens
-const T_GULL_OUT = 1.3;    // gull comes out through the portal...
-const T_PERCH = 2.8;       // ...and settles on the bottom of its rim, facing the viewer
+const T_GULL_OUT = 1.0;    // a gull flies across the room on the far side toward the portal...
+const T_PERCH = 2.8;       // ...brakes and lands on the bottom of its rim, facing the viewer
 const T_CALLS = [3.25];    // and yells at them
 const T_BILL = 3.5;        // a $100 bill appears at the ceiling and flutters down to the gull
 const BILL_FALL = 0.42;    // m/s
@@ -836,7 +829,7 @@ const BILL_TOP = 0.75;     // m above eye level, where it appears
 const BILL_DROP = 0.88;    // m it falls before the gull catches it, half a metre above the rim's lowest point
 const T_GRAB = T_BILL + BILL_DROP / BILL_FALL; // the gull catches it (~5.6 s)
 const T_SWOOP = T_GRAB - 0.5;     // gull jumps up off the rim for it
-const T_GULL_GONE = T_GRAB + 2.6; // gull is through the portal and out of sight
+const T_GULL_GONE = T_GRAB + 2.7; // gull is through the portal and out of sight
 const T_GLIDE = T_GRAB + 0.9;     // player starts flying through the portal
 
 // Flight: constant speed with soft raised-cosine ramps at both ends, so it
@@ -847,6 +840,7 @@ const T_ARRIVE = T_GLIDE + GLIDE_DUR;
 const T_HINT = T_ARRIVE + 1.0; // play ball appears
 
 const PORTAL_Z = -PORTAL_DIST, PORTAL_R = 0.55, PORTAL_END_R = 1.3;
+const OPEN_AHEAD = 0.3; // m before the portal's plane where the world opens up around the player
 
 const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const easeOutBack = (x) => 1 + 2.2 * Math.pow(x - 1, 3) + 1.2 * Math.pow(x - 1, 2);
@@ -894,7 +888,12 @@ function portalPoseAt(t, fly) {
 // Gull paths, through the gull's body (anchor space).
 const gullOutCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
 const gullSwoopCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
-const gullInCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
+const gullClimbCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
+const gullDiveCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
+// The way off with the bill: a climb, a stall turn at the top (it hangs
+// nose up and swings round, as gulls do in a breeze) and a dive into the
+// portal. A U-turn that tight in level flight is beyond any bird.
+const EXIT_CLIMB = 0.24, EXIT_TURN = 0.42; // shares of the way off
 // Where it catches the bill it's flying up and toward the viewer, a little to the right.
 const SWOOP_END = new THREE.Vector3(0.3, 0.62, 0.72).normalize();
 const ZERO = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), X_AXIS = new THREE.Vector3(1, 0, 0);
@@ -903,11 +902,38 @@ const tmpM = new THREE.Matrix4();
 const facing = (dir, out = new THREE.Quaternion()) => out.setFromRotationMatrix(tmpM.lookAt(dir, ZERO, UP));
 // Put the gull's body at `body` (anchor space). The body sits lower in the
 // model when it stands than when it flies, so shift by the blend of the two.
+// Flapping, it rises a little on each downstroke and sinks on the upstroke.
 function placeGull(body, quat, perch) {
   const u = gull.userData;
   gull.quaternion.copy(quat);
   const off = new THREE.Vector3().lerpVectors(u.bodyFly, u.bodyRest, clamp01(perch)).applyQuaternion(quat);
   gull.position.copy(body).sub(off);
+  gull.position.y -= 0.014 * (u.flapS || 0) * Math.cos(2 * Math.PI * u.phase);
+}
+// How a bird sits in the air along a path: beak along the path, rolled into
+// a turn the way lift has to lean toward its inside (a bank), and with
+// `flare` (radians) the nose pitched up as it brakes. `speed` in m/s.
+const BANK_MAX = 0.95; // about 55 degrees
+const tanA = new THREE.Vector3(), tanB = new THREE.Vector3(), lean = new THREE.Vector3();
+const wingAxis = new THREE.Vector3(), backAxis = new THREE.Vector3(), flareQ = new THREE.Quaternion();
+function flightQuat(curve, u, speed, flare = 0, out = new THREE.Quaternion()) {
+  const len = curve.getLength(), d = Math.min(0.03, 0.12 / len);
+  const ua = Math.max(0.001, u - d), ub = Math.min(0.999, u + d);
+  const fwd = curve.getTangentAt(Math.min(0.999, Math.max(0.001, u)), v2);
+  curve.getTangentAt(ua, tanA); curve.getTangentAt(ub, tanB);
+  // Sideways acceleration: the path's curvature times speed squared.
+  lean.subVectors(tanB, tanA).divideScalar(Math.max(1e-4, (ub - ua) * len)).multiplyScalar(speed * speed);
+  lean.addScaledVector(fwd, -lean.dot(fwd));
+  lean.clampLength(0, 9.8 * Math.tan(BANK_MAX));
+  lean.y += 9.8;
+  // Wings across the lift, back up along it (the model's x, y and z).
+  wingAxis.crossVectors(lean, fwd);
+  if (wingAxis.lengthSq() < 1e-8) wingAxis.set(1, 0, 0); // straight up or down
+  wingAxis.normalize();
+  backAxis.crossVectors(fwd, wingAxis);
+  out.setFromRotationMatrix(tmpM.makeBasis(wingAxis, backAxis, fwd));
+  if (flare) out.multiply(flareQ.setFromAxisAngle(X_AXIS, -flare));
+  return out;
 }
 // The lowest point of the portal's rim, where the gull sits (anchor space).
 const perchPoint = (pp) => new THREE.Vector3(0, pp.y - pp.r + 0.003, pp.z);
@@ -936,13 +962,15 @@ function startSequence() {
   const u = gull.userData;
   // Sitting on the bottom of the open portal's rim, facing the viewer (the anchor's +Z).
   const sit = perchBody({ y: py, r: PORTAL_R, z: pz }, new THREE.Quaternion());
-  // Out through the lower half of the disk toward the viewer, and a flare
-  // back down onto the lowest point of the rim.
+  // In from high up at the back of the room on the far side, curving down
+  // toward the portal, lined up with its rim for the last metre, and a flare
+  // onto the rim's lowest point: always moving forward, like landing on a
+  // window sill from inside.
   gullOutCurve.points = [
-    new THREE.Vector3(0.06, py - 0.08, pz - 0.65),
-    new THREE.Vector3(0.04, py - 0.2, pz + 0.12),
-    new THREE.Vector3(0.1, sit.y + 0.17, pz + 0.3),
-    new THREE.Vector3(0.04, sit.y + 0.09, pz + 0.14),
+    new THREE.Vector3(-0.85, py + 0.7, pz - 3.3),
+    new THREE.Vector3(-0.38, py + 0.4, pz - 1.9),
+    new THREE.Vector3(0.03, sit.y + 0.22, pz - 0.75),
+    new THREE.Vector3(0.0, sit.y + 0.06, pz - 0.2),
     sit.clone(),
   ];
   // Catch: the beak tip meets the falling bill while the gull flies along
@@ -954,17 +982,21 @@ function startSequence() {
     sit.clone().lerp(grabBody, 0.45).add(new THREE.Vector3(0.01, -0.02, -0.02)),
     grabBody.clone(),
   ];
-  // Off with it: up toward the viewer's right, round in a climbing turn, and
-  // in through the disk.
-  gullInCurve.points = [
+  // Off with it: on up the way it jumped, a stall turn at the top, and a
+  // dive in through the middle of the disk, curving away into the room.
+  const apex = new THREE.Vector3(grabBody.x + 0.06, Math.min(py + 0.42, grabBody.y + 0.4), grabBody.z + 0.14);
+  gullClimbCurve.points = [
     grabBody.clone(),
-    grabBody.clone().addScaledVector(SWOOP_END, 0.16),
-    new THREE.Vector3(0.26, py + 0.08, pz + 0.25),
-    new THREE.Vector3(0.4, py + 0.22, pz + 0.14),
-    new THREE.Vector3(0.34, py + 0.25, pz - 0.04),
-    new THREE.Vector3(0.12, py + 0.13, pz - 0.38),
-    new THREE.Vector3(-0.3, py + 0.45, pz - 2.2),
-    new THREE.Vector3(-0.65, py + 1.0, pz - 4.0),
+    grabBody.clone().addScaledVector(SWOOP_END, 0.14),
+    apex.clone().add(new THREE.Vector3(-0.01, -0.1, -0.05)),
+    apex.clone(),
+  ];
+  gullDiveCurve.points = [
+    apex.clone(),
+    new THREE.Vector3(apex.x * 0.5, py + 0.16, pz + 0.12),
+    new THREE.Vector3(-0.12, py + 0.1, pz - 0.6),
+    new THREE.Vector3(-0.5, py + 0.35, pz - 2.4),
+    new THREE.Vector3(-0.9, py + 0.8, pz - 4.2),
   ];
   state.gullAway = false;
   gullVoice.setLevel(1);
@@ -988,7 +1020,8 @@ function startSequence() {
   playBall.userData.pressedAt = -1;
   portal.scale.setScalar(0.0001);
   $('replay').hidden = true;
-  splatJane?.hide();
+  // Jane is in the room already, in her first pose, seen through the portal.
+  splatJane?.appear(0, false, false);
   startMusic();
 }
 
@@ -1014,13 +1047,16 @@ function update(t, dt) {
   ringMaterial.uniforms.radius.value = Math.max(0.05, pp.r);
   portal.visible = T > T_PORTAL;
 
-  // Crossing: once the head is on the far side of the portal plane, show the
-  // world everywhere.
+  // Crossing: shortly before the head reaches the portal's plane, show the
+  // world everywhere. Waiting until it is through let the near clipping plane
+  // (5 cm in front of the eyes) cut the portal's disk away for the last few
+  // centimetres, and passthrough flashed up for a moment. OPEN_AHEAD before
+  // the plane the disk already fills the view, so the switch can't be seen.
   const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
   camWorld.setFromMatrixPosition(cam.matrixWorld);
   camLocal.copy(camWorld);
   anchor.worldToLocal(camLocal);
-  if (!state.inside && T > T_GLIDE && camLocal.z < pp.z) {
+  if (!state.inside && T > T_GLIDE && camLocal.z < pp.z + OPEN_AHEAD) {
     state.inside = true;
     state.insideAt = T;
     setWorldMasked(false);
@@ -1050,19 +1086,21 @@ function update(t, dt) {
     let jawOpen = 0, look = null, lookW = 0;
     const toViewer = (from) => facing(v2.set(camLocal.x - from.x, 0, camLocal.z - from.z));
     if (T < T_PERCH) {
-      // Out through the portal and a flare back onto the bottom of its rim,
-      // turning to face the viewer as it lands.
-      const k = clamp01((T - T_GULL_OUT) / (T_PERCH - T_GULL_OUT));
+      // In across the room on the far side, slowing all the way (4 m/s
+      // down to nothing): a glide, a few beats, a glide lined up with the
+      // rim, then nose up, wings forward and fast short beats to brake, and
+      // down onto its feet facing the viewer.
+      const dur = T_PERCH - T_GULL_OUT;
+      const k = clamp01((T - T_GULL_OUT) / dur);
       const u = 1 - (1 - k) * (1 - k);
+      const speed = (gullOutCurve.getLength() * 2 * (1 - k)) / dur;
       const body = gullOutCurve.getPointAt(u, v1);
-      const q = facing(gullOutCurve.getTangentAt(Math.min(0.999, u), v2));
-      // It faces the viewer by the time it stops coming forward, then backs
-      // down onto the rim with its body tipped up, braking with its wings.
-      const turn = smooth01((k - 0.15) / 0.28);
-      const sit = smooth01((k - 0.72) / 0.28);
-      q.slerp(toViewer(body), turn);
-      q.multiply(tmpQuat.setFromAxisAngle(X_AXIS, -0.5 * Math.sin(Math.PI * clamp01((k - 0.4) / 0.55))));
-      poseGull(dt, 1, THREE.MathUtils.lerp(BEAT, BEAT_HOVER, clamp01((k - 0.45) / 0.3)), sit);
+      const flare = 0.9 * smooth01((k - 0.58) / 0.22) * (1 - smooth01((k - 0.9) / 0.1));
+      const sit = smooth01((k - 0.86) / 0.14);
+      const q = flightQuat(gullOutCurve, u, speed, flare).slerp(toViewer(body), sit);
+      const beats = k < 0.18 ? 0.25 : k < 0.42 ? 1 : k < 0.56 ? 0.3 : 1;
+      gu.effort = THREE.MathUtils.damp(gu.effort ?? beats, beats, 9, dt);
+      poseGull(dt, gu.effort, k > 0.56 ? BEAT_HOVER : BEAT, sit);
       placeGull(body, q, sit);
       setObjectMasked(!state.inside && body.z < pp.z);
     } else if (T < T_SWOOP) {
@@ -1094,14 +1132,38 @@ function update(t, dt) {
       jawOpen = 0.5 * smooth01((k - 0.2) / 0.4);
     } else {
       // Off through the portal with the bill; its sounds fade as it goes.
-      const k = clamp01((T - T_GRAB) / (T_GULL_GONE - T_GRAB));
-      // Picks up speed over the first half, then holds it.
-      const u = Math.min(1, k < 0.5 ? (k * k) / 0.75 : (k - 0.25) / 0.75);
-      const body = gullInCurve.getPointAt(u, v1);
-      // Carries on the way it jumped, then follows its path.
-      const q = facing(SWOOP_END).slerp(
-        facing(gullInCurve.getTangentAt(Math.min(0.999, u), v2), tmpQuat), smooth01((T - T_GRAB) / 0.3));
-      poseGull(dt, 1, BEAT, 0, !state.gullAway);
+      const dur = T_GULL_GONE - T_GRAB;
+      const k = clamp01((T - T_GRAB) / dur);
+      let body, q, beats, beat = BEAT_HOVER;
+      if (k < EXIT_CLIMB) {
+        // Climbing on, hard beats, slowing to a hang at the top.
+        const c = k / EXIT_CLIMB, u = 1 - (1 - c) * (1 - c);
+        body = gullClimbCurve.getPointAt(u, v1);
+        q = facing(SWOOP_END).slerp(flightQuat(gullClimbCurve, u, 0, 0.35 * c, tmpQuat), smooth01(c / 0.5));
+        beats = 1;
+      } else if (k < EXIT_TURN) {
+        // The stall turn: hanging nose up, it swings round to face the
+        // portal and tips over into the dive, wings spread.
+        const c = (k - EXIT_CLIMB) / (EXIT_TURN - EXIT_CLIMB);
+        body = gullDiveCurve.getPoint(0, v1);
+        body.y += 0.03 * Math.sin(Math.PI * c);
+        const top = flightQuat(gullClimbCurve, 0.999, 0, 0.35);
+        const yaw = tmpQuat.setFromAxisAngle(UP, Math.PI * smooth01(c / 0.8) * (body.x >= 0 ? 1 : -1));
+        q = yaw.multiply(top);
+        q.slerp(flightQuat(gullDiveCurve, 0.02, 1.5), smooth01((c - 0.55) / 0.45));
+        beats = c < 0.6 ? 0.6 : 0.2;
+      } else {
+        // The dive: wings held half open, gathering speed, one or two beats
+        // as it levels out inside, banking into the curve away.
+        const c = (k - EXIT_TURN) / (1 - EXIT_TURN), u = c * c * (1.6 - 0.6 * c);
+        const speed = (gullDiveCurve.getLength() * c * (3.2 - 1.8 * c)) / (dur * (1 - EXIT_TURN));
+        body = gullDiveCurve.getPointAt(u, v1);
+        q = flightQuat(gullDiveCurve, u, speed);
+        beats = c < 0.45 ? 0.1 : c < 0.75 ? 0.9 : 0.35;
+        beat = BEAT;
+      }
+      gu.effort = THREE.MathUtils.damp(gu.effort ?? beats, beats, 9, dt);
+      poseGull(dt, gu.effort, beat, 0, !state.gullAway);
       placeGull(body, q, 0);
       const behind = !state.inside && body.z < pp.z;
       setObjectMasked(behind);
@@ -1145,19 +1207,28 @@ function update(t, dt) {
   if (playBall.visible) updatePlayBall(T, t);
 }
 
-function showPlayBall(on = true) {
+// at: where the ball floats (world position), e.g. beside the toy jetski
+// after a race; without it, ahead of where the flight ended.
+function showPlayBall(on = true, at = null) {
+  const u = playBall.userData;
   playBall.visible = hint.visible = on;
-  playBall.userData.shownAt = state.fixedT ?? (clock.now - state.start);
-  playBall.userData.pressedAt = -1;
-  hint.position.set(0, state.eye - 0.38, -FLY_DIST - 0.62);
+  if (!on) return;
+  u.shownAt = state.fixedT ?? (clock.now - state.start);
+  u.pressedAt = -1;
+  u.base = at ? anchor.worldToLocal(at.clone()) : null;
+  const base = playBallBase();
+  hint.userData.draw(at ? 'Touch to watch again' : 'Touch the ball to play');
+  hint.position.set(base.x, base.y - 0.18, base.z);
 }
+const playBallBase = () => playBall.userData.base || new THREE.Vector3(0, state.eye - 0.2, -FLY_DIST - 0.62);
 
 const ballWorld = new THREE.Vector3();
 function updatePlayBall(T, t) {
   const u = playBall.userData;
   const appear = easeOutBack(clamp01((T - u.shownAt) / 0.8));
   const press = u.pressedAt > 0 ? clamp01((t - u.pressedAt) / 0.45) : 0;
-  playBall.position.set(0, state.eye - 0.2 + 0.025 * Math.sin(t * 1.6), -FLY_DIST - 0.62);
+  playBall.position.copy(playBallBase());
+  playBall.position.y += 0.025 * Math.sin(t * 1.6);
   playBall.scale.setScalar(Math.max(0.0001, appear * (1 + press * 0.6)));
   u.ball.rotation.y = t * 0.4;
   const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
@@ -1208,6 +1279,7 @@ function enterRace() {
   raceBox.on = true;
   stopMusic(true);
   gullVoice.setLevel(0, 0.2);
+  playBall.visible = hint.visible = false;
   $('replay').hidden = true;
   r.resize(innerWidth, innerHeight);
   r.start();
@@ -1283,20 +1355,16 @@ renderer.setAnimationLoop((time, frame) => {
   if (inXr) updateHands(frame);
   if (videoControls.visible) {
     const rayHits = [];
-    let controllers = false;
     for (const { c, line } of pointers) {
       const src = c.userData.source;
       if (!inXr || !src || src.hand || src.targetRayMode !== 'tracked-pointer') { line.visible = false; continue; }
-      controllers = true;
       const hit = videoControls.hitRay(rayOf(c));
       line.visible = hit.near && videoControls.shown;
       if (hit.near) line.scale.z = hit.distance;
       rayHits.push(hit);
     }
     videoControls.update(t, dt, {
-      fingertips, rayHits, head,
-      lifted: inXr && lift.up, waiting: video.waiting,
-      input: !inXr ? 'screen' : (controllers && !lift.hands ? 'controller' : 'hand'),
+      fingertips, rayHits,
       paused: video.paused, time: video.currentTime, duration: video.duration, label: video.label,
     });
   } else {
@@ -1315,11 +1383,14 @@ renderer.setAnimationLoop((time, frame) => {
   renderer.render(scene, camera);
 });
 
-// Jane's splats keep loading in the background; she's needed only after the flight.
+// Jane's first pose is in before the start (she's in the room from the
+// first moment); her other poses keep loading in the background.
 const sceneReady = Promise.all([
   room.initialized.catch((err) => { throw new Error(`room scan: ${err.message || err}`); }),
   gullReady.catch((err) => { throw new Error(`seagull: ${err.message || err}`); }),
   billReady.catch((err) => { throw new Error(`bill: ${err.message || err}`); }),
+  splatJane?.firstReady,
+  outsideReady,
 ]);
 // The race gets built before the buttons unlock (it would stall the headset
 // if it happened later). It never holds the opening back for long.
