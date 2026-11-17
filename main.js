@@ -530,7 +530,14 @@ const gullReady = gltfLoader.loadAsync('./assets/seagull/seagull.glb').then((glt
   setObjectMasked(false);
 });
 
-const gullVoice = new GullVoice(listener, gull);
+// Sound must never stop the opening from loading: if the voice can't be
+// made, the gull is silent.
+const gullVoice = (() => {
+  try { return new GullVoice(listener, gull); } catch (err) {
+    console.warn('Gull sounds are off:', err);
+    return { setLevel() {}, call() {}, flap() {} };
+  }
+})();
 // Wing beats per second; the clip's own pace is 2.5. BEAT_HOVER: braking to
 // land and taking off, when a gull beats harder and faster.
 const BEAT = 2.2, BEAT_HOVER = 3.1;

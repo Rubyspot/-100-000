@@ -11,7 +11,10 @@
 // hard beats of landing and taking off.
 import * as THREE from 'three';
 
-const SR = 44100;
+// Sample rate the sounds are made at: the audio context's own (Quest runs at
+// 48 kHz). It has to match for the room echo: a ConvolverNode refuses a
+// buffer at any other rate, and that error stopped the whole page loading.
+let SR = 44100;
 
 function makeBuffer(ctx, seconds, fill) {
   const buf = ctx.createBuffer(1, Math.ceil(seconds * SR), SR);
@@ -119,6 +122,7 @@ function makeRoom(ctx) {
 export class GullVoice {
   constructor(listener, object) {
     this.ctx = listener.context;
+    SR = this.ctx.sampleRate || 44100;
     this.audio = new THREE.PositionalAudio(listener);
     this.audio.panner.panningModel = 'HRTF';
     this.audio.setRefDistance(0.6);
@@ -128,11 +132,15 @@ export class GullVoice {
     // off: straight from where it is, and a little of it through the room.
     this.master = this.ctx.createGain();
     this.master.connect(this.audio.panner);
-    const room = this.ctx.createConvolver();
-    room.buffer = makeRoom(this.ctx);
-    const wet = this.ctx.createGain();
-    wet.gain.value = 0.22;
-    this.master.connect(room).connect(wet).connect(listener.getInput());
+    try {
+      const room = this.ctx.createConvolver();
+      room.buffer = makeRoom(this.ctx);
+      const wet = this.ctx.createGain();
+      wet.gain.value = 0.22;
+      this.master.connect(room).connect(wet).connect(listener.getInput());
+    } catch (err) {
+      console.warn('Gull: no room echo', err); // dry sound only, never a stopped page
+    }
     this.level = 1;
     this.flapBuf = makeFlap(this.ctx);
     this.calls = [
