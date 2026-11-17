@@ -6,7 +6,9 @@
 // Jane forms out of particles there and goes through her poses, 10 s each
 // (surfboard, shaka, then singing into a microphone), and the play ball starts
 // the 180 video, with palm-sized controls (back 10 s, pause, close) within
-// reach while it plays.
+// reach while it plays. After the video Jane offers the jetski race: a toy
+// jetski floats in front of the player, and touching it starts the race
+// (jetski/race.js) right here, in the same session.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
@@ -84,7 +86,10 @@ const statusEl = $('status');
 
 // ---------- renderer, scene, camera ----------
 
-const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, stencil: true });
+// No multisampling: it does nothing for splats and costs frame rate. The
+// jetski race's islands and jetskis do get smoother edges with it, so ?aa=1
+// turns it on for the whole session, to compare in the headset.
+const renderer = new THREE.WebGLRenderer({ antialias: params.get('aa') === '1', alpha: true, stencil: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x000000, 0);
@@ -109,6 +114,7 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  if (raceBox.api) raceBox.api.resize(innerWidth, innerHeight);
 });
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8a7a66, 2.2));
@@ -1075,11 +1081,72 @@ function updatePlayBall(T, t) {
   if (u.pressedAt < 0 && appear > 0.9 && fingertips.some((p) => p.distanceTo(ballWorld) < 0.13)) startVideo();
 }
 
+// ---------- jetski race ----------
+// The race (jetski/race.js) is a world of its own, with its own scene, camera
+// and sound. It is built while the start card is still up, so nothing stalls
+// in the headset. Touching the floating jetski after the video hands the
+// frame loop over to it, in the same session, and leaving the race comes
+// back to Jane's room ('scene:jetski-end' carries the result). ?race=0 leaves
+// it out; if it can't be loaded, the jetski opens the race's own page.
+const raceBox = { api: null, on: false, ref: null };
+// The ride's own switches work on this page too: ?bar=below,ahead (grips this
+// far below and ahead of the eyes, metres), ?riser=, ?vignette=0, ?streaks=0,
+// ?heave=0 (see jetski/README.md).
+const raceBar = (params.get('bar') || '').split(',').map(parseFloat);
+const raceRiser = parseFloat(params.get('riser'));
+const raceReady = (params.get('race') === '0' ? Promise.resolve(null) : import('./jetski/race.js').then(({ createRace }) => {
+  const r = createRace({
+    renderer, embedded: true,
+    onExit: (result) => leaveRace(result),
+    options: {
+      debug: DEBUG,
+      music: MUSIC_VOLUME > 0,
+      autopilot: params.has('autopilot') ? (params.get('autopilot') || true) : false, // rides itself, for tests
+      vignette: params.get('vignette') !== '0',
+      streaks: params.get('streaks') !== '0',
+      heave: params.get('heave') === '0' ? 0 : 1,
+      ...(raceBar.length === 2 && raceBar.every(Number.isFinite) ? { below: raceBar[0], ahead: raceBar[1] } : {}),
+      ...(Number.isFinite(raceRiser) ? { riser: raceRiser } : {}),
+    },
+  });
+  return r.ready.then(() => { raceBox.api = r; return r; });
+})).catch((err) => { console.warn('The jetski race did not load:', err); return null; });
+
+function enterRace() {
+  const r = raceBox.api;
+  if (!r || raceBox.on) return false;
+  raceBox.on = true;
+  stopMusic(true);
+  gullVoice.setLevel(0, 0.2);
+  $('replay').hidden = true;
+  r.resize(innerWidth, innerHeight);
+  r.start();
+  // Quest's own recenter (hold the Meta button) seats the rider again.
+  const ref = renderer.xr.isPresenting ? renderer.xr.getReferenceSpace() : null;
+  if (ref && ref.addEventListener && raceBox.ref !== ref) {
+    raceBox.ref = ref;
+    ref.addEventListener('reset', () => { if (raceBox.on) r.recenter(); });
+  }
+  return true;
+}
+// quiet: the session ended under the race, so nobody is in the room to greet.
+function leaveRace(result, quiet = false) {
+  if (!raceBox.on) return;
+  raceBox.on = false;
+  raceBox.api.stop();
+  if (quiet) return;
+  if (!renderer.xr.isPresenting) $('replay').hidden = false;
+  window.dispatchEvent(new CustomEvent('scene:jetski-end', { detail: result || null }));
+}
+
 // Hooks for the Jane avatar and other scene modules.
 // Events on window: 'scene:arrived' (flight into the room finished),
-// 'scene:video-start', 'scene:video-end'.
+// 'scene:video-start', 'scene:video-end', 'scene:jetski-end' (back from the
+// race; detail is its result).
 const sceneApi = {
   THREE, scene, renderer, camera, rig, anchor, listener, state,
+  // Starts the jetski race in this session. False if it isn't loaded.
+  startJetski: enterRace,
   // Set false to let Jane decide when the play ball appears (showPlayBall).
   autoPlayBall: true,
   showPlayBall,
@@ -1101,6 +1168,13 @@ const jane = createJane(sceneApi);
 
 let loaded = false;
 renderer.setAnimationLoop((time, frame) => {
+  // The race draws its own world while it runs. If it breaks, back to the room.
+  if (raceBox.on) {
+    try { raceBox.api.frame(time, frame); return; } catch (err) {
+      console.error('The jetski race stopped:', err);
+      leaveRace(null);
+    }
+  }
   // One clock for everything: the frame's own timestamp (XR display time in
   // the headset), so motion steps evenly from frame to frame.
   const t = time / 1000;
@@ -1151,7 +1225,13 @@ const sceneReady = Promise.all([
   gullReady.catch((err) => { throw new Error(`seagull: ${err.message || err}`); }),
   billReady.catch((err) => { throw new Error(`bill: ${err.message || err}`); }),
 ]);
-sceneReady.then(() => {
+// The race gets built before the buttons unlock (it would stall the headset
+// if it happened later). It never holds the opening back for long.
+const allReady = sceneReady.then(() => {
+  if (!raceBox.api) statusEl.textContent = 'Loading the jetski race…';
+  return Promise.race([raceReady, new Promise((done) => setTimeout(done, 30000))]);
+});
+allReady.then(() => {
   loaded = true;
   statusEl.textContent = 'Ready.';
   $('preview').disabled = false;
@@ -1182,6 +1262,7 @@ $('enterXr').addEventListener('click', async () => {
     // Pinch (select) with either hand replays once the sequence has finished.
     // Pinch while pointing at the ball also plays.
     session.addEventListener('select', (e) => {
+      if (raceBox.on) return; // the race has its own controls
       const ref = renderer.xr.getReferenceSpace();
       const pose = e.frame.getPose(e.inputSource.targetRaySpace, ref);
       if (!pose) return;
@@ -1194,7 +1275,7 @@ $('enterXr').addEventListener('click', async () => {
       playBall.getWorldPosition(ballWorld);
       if (ray.distanceSqToPoint(ballWorld) < 0.2 * 0.2) startVideo();
     });
-    session.addEventListener('end', () => { $('ui').hidden = false; state.running = false; stopMusic(true); });
+    session.addEventListener('end', () => { leaveRace(null, true); $('ui').hidden = false; state.running = false; stopMusic(true); });
     // Give tracking a moment to settle before reading the head pose.
     setTimeout(startSequence, 600);
   } catch (err) {
@@ -1218,7 +1299,7 @@ $('replay').addEventListener('click', () => {
   startSequence();
 });
 renderer.domElement.addEventListener('click', (e) => {
-  if (renderer.xr.isPresenting) return;
+  if (renderer.xr.isPresenting || raceBox.on) return;
   const ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   const rc = new THREE.Raycaster();
   rc.setFromCamera(ndc, camera);
@@ -1226,12 +1307,12 @@ renderer.domElement.addEventListener('click', (e) => {
   if (playBall.visible && rc.intersectObject(playBall.userData.ball).length) startVideo();
 });
 window.__startVideo = startVideo;
-window.__debug = { state, playBall, video, worldRoot, gull, bill, splatJane, music, spark, videoControls, gullVoice };
+window.__debug = { state, playBall, video, worldRoot, gull, bill, splatJane, music, spark, videoControls, gullVoice, raceBox, enterRace, leaveRace };
 
 // Test hook: freeze the sequence at a given time (seconds).
 window.__setSequenceTime = (T) => { state.fixedT = T; };
 window.__camera = camera;
 
 if (params.has('autostart')) {
-  sceneReady.then(() => $('preview').click());
+  allReady.then(() => $('preview').click());
 }

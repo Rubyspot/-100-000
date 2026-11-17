@@ -8,7 +8,9 @@ flies through the portal into the room scan. Jane's splat forms there out of
 particles and goes through her three poses, 10 s each, changing through a swirl
 of particles: surfboard, shaka, then singing into a microphone, where she stays.
 The gold ball starts the 180° video, and the song fades out when it starts. After
-the video she comes back in the shaka pose.
+the video she comes back in the shaka pose and offers the jetski race: a toy jetski
+floats in front of the player, and touching it starts the race ([jetski/](jetski/README.md))
+in the same session. Leaving the race comes back to the room, where she reacts to the result.
 
 - three.js + [Spark 2](https://sparkjs.dev) for splats, vendored in `vendor/` (no build step).
 - `assets/room-400k.sog`: "Room splat" scan decimated from 4.4M to 400k splats, no SH, lifted 7 cm
@@ -30,7 +32,9 @@ URL options: `?debug` (fps and video source label in headset), `?to=desk` (fly t
 `?spot=-0.68,-1.93` (where Jane stands, room-scan x,z), `?height=1.75` (Jane's height), `?sparks=0.35`
 (share of her splats that fly as sparks when she transforms, 1 = all), `?poses=surf,new,sing` (her poses
 and their order), `?hold=10` (seconds on each pose), `?music=0.55`
-(song volume, 0 mutes), `?jane=off` (no Jane), `?autostart` (flat preview).
+(song volume, 0 mutes), `?jane=off` (no Jane), `?autostart` (flat preview), `?race=0` (leave the jetski
+race out; the floating jetski then opens `/jetski/`), `?aa=1` (multisampling for the whole session: off
+by default because it costs frame rate with splats, but the race's edges are smoother with it).
 
 Run locally: `python3 -m http.server` in this folder, open http://localhost:8000.
 
@@ -80,14 +84,17 @@ Other options: `?speed=0.4` sets the flight speed in m/s (constant).
 
 `window.sceneApi` exposes the scene to other modules (the Jane avatar):
 `scene`, `renderer`, `camera`, `rig` (camera parent; the flight moves it),
-`anchor`, `listener`, `showPlayBall(on)`, `playVideo()`, `arrivalPose()`, and
+`anchor`, `listener`, `showPlayBall(on)`, `playVideo()`, `arrivalPose()`,
+`startJetski()` (starts the race in this session; false if it isn't loaded) and
 `autoPlayBall` (set false to control when the play ball shows). Window events:
-`scene:arrived`, `scene:video-start`, `scene:video-end`.
+`scene:arrived`, `scene:video-start`, `scene:video-end`, `scene:jetski-end` (back
+from the race; `detail` is its result: money, time, won, bills, total, finished).
 
 ## Jane
 
 Jane (placeholder figure until her MetaHuman) welcomes the player on arrival,
-offers the video, chats after it and sends them to `/jetski/`. Live
+offers the video, chats after it, floats a toy jetski in front of them that
+starts the race, and reacts to the result when they come back. Live
 conversation needs an ElevenLabs agent id (`?agent=<id>` or `jane/config.js`);
 without one she runs scripted lines with the browser voice. `?jane=off` hides
 her. Details and setup: [jane/README.md](jane/README.md).

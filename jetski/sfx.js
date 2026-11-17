@@ -5,14 +5,17 @@
 // - Ocean bed, splashes sized by landing speed, cash "cha-ching", and the
 //   Crispy J playlist.
 // - Space: a reverb send and a slap-back echo whose delay follows the
-//   distance to the walls, so the gorge, the canals and the bridges sound
+//   distance to the walls, so the rock canals and the arches sound
 //   enclosed; Jane's engine gets an exaggerated Doppler as she passes.
 // - Race sounds: wind that builds with speed, hull slaps, wall scrapes and
-//   thuds, a boost whoosh, gate chimes that climb with Hype, countdown
-//   beeps, a lap bell, the finish fanfare and the waterfall's roar.
+//   thuds, a boost whoosh, a pluck for every bill that climbs with the
+//   combo (with a crisp crackle), a boing off the ramps, gate chimes,
+//   countdown beeps and the finish fanfare.
 // Recorded files can replace the synthesized ones: drop engine.mp3,
 // ocean.mp3 or splash.mp3 into jetski/audio/ and list them in sounds.json.
-const SR = 44100;
+// Buffers are generated at the audio hardware's own rate (48 kHz on Quest):
+// a ConvolverNode refuses a buffer at any other rate.
+let SR = 44100;
 
 function buffer(ctx, seconds, channels, fill) {
   const b = ctx.createBuffer(channels, Math.ceil(seconds * SR), SR);
@@ -135,6 +138,19 @@ function makeWhoosh(ctx) {
   });
 }
 
+// Crispy: a handful of tiny bright clicks.
+function makeCrackle(ctx) {
+  return buffer(ctx, 0.16, 1, (d) => {
+    let hp = 0, prev = 0;
+    for (let i = 0; i < d.length; i++) {
+      const t = i / SR;
+      const click = Math.random() < 0.012 + 0.05 * Math.exp(-t / 0.03) ? (Math.random() * 2 - 1) : 0;
+      hp = click - prev * 0.6; prev = click;
+      d[i] = hp * Math.exp(-t / 0.07) * 0.9;
+    }
+  });
+}
+
 // Reverb impulse: decaying stereo noise with a darker tail.
 function makeImpulse(ctx, seconds) {
   return buffer(ctx, seconds, 2, (d) => {
@@ -210,6 +226,7 @@ export class Sfx {
     this.listener = listener;
     this.ctx = listener.context;
     const ctx = this.ctx;
+    SR = ctx.sampleRate;
     this.master = ctx.createGain(); this.master.connect(listener.getInput());
     this.buffers = {
       engine: makeEngineLoop(ctx),
@@ -221,6 +238,7 @@ export class Sfx {
       thud: makeThud(ctx),
       slap: makeSlap(ctx),
       whoosh: makeWhoosh(ctx),
+      crackle: makeCrackle(ctx),
     };
     // Effects bus: everything here is also sent to the reverb and the echo.
     this.bus = ctx.createGain(); this.bus.connect(this.master);
@@ -241,8 +259,9 @@ export class Sfx {
   // audio/sounds.json lists which recorded files exist, e.g. ["engine", "splash"].
   async loadRecorded() {
     let names = [];
-    try { names = await (await fetch('./audio/sounds.json')).json(); } catch { /* none */ }
-    const get = (n) => (names.includes(n) ? tryLoad(this.ctx, `./audio/${n}.mp3`) : null);
+    const at = (file) => new URL('./audio/' + file, import.meta.url).href;
+    try { names = await (await fetch(at('sounds.json'))).json(); } catch { /* none */ }
+    const get = (n) => (names.includes(n) ? tryLoad(this.ctx, at(n + '.mp3')) : null);
     const [engine, ocean, splash] = await Promise.all(['engine', 'ocean', 'splash'].map(get));
     if (engine) { this.buffers.engine = engine; this.buffers.recorded = true; }
     if (ocean) this.buffers.ocean = ocean;
@@ -301,7 +320,37 @@ export class Sfx {
     const f = 587.33 * Math.pow(2, scale[Math.min(scale.length - 1, level)] / 12);
     this.tone(f, 0, 0.6, 'sine', 0.16); this.tone(f * 2, 0, 0.35, 'sine', 0.05); this.tone(f * 1.5, 0.07, 0.5, 'triangle', 0.06);
   }
-  gate() { if (this.ctx.state === 'running') this.tone(440, 0, 0.25, 'triangle', 0.08); }
+  gate() { if (this.ctx.state === 'running') { this.tone(783.99, 0, 0.3, 'triangle', 0.07); this.tone(1174.66, 0.06, 0.4, 'sine', 0.06); } }
+  // A bill: a bright pluck that climbs a pentatonic scale with the combo,
+  // with a crisp little crackle on top. At the top of the combo the notes
+  // roll through a little tune instead of repeating. Gold rings out longer.
+  pickup(combo, gold = false) {
+    if (this.ctx.state !== 'running') return;
+    const scale = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
+    let step = Math.max(0, Math.min(scale.length - 1, combo - 1));
+    if (combo >= 10 && !gold) { this.pickN = (this.pickN || 0) + 1; step = [9, 10, 8, 10, 9, 7, 8, 10][this.pickN % 8]; }
+    const f = 523.25 * Math.pow(2, scale[step] / 12);
+    this.tone(f, 0, gold ? 0.9 : 0.32, 'triangle', 0.13);
+    this.tone(f * 2, 0.02, gold ? 0.7 : 0.2, 'sine', 0.06);
+    if (gold) { this.tone(f * 1.5, 0.09, 0.8, 'triangle', 0.09); this.tone(f * 2, 0.18, 0.9, 'sine', 0.08); }
+    this.play('crackle', gold ? 0.5 : 0.3, 0.9 + Math.random() * 0.3);
+  }
+  miss() { if (this.ctx.state === 'running') { this.tone(330, 0, 0.16, 'triangle', 0.05); this.tone(247, 0.08, 0.22, 'triangle', 0.05); } }
+  // Off a ramp: a rubbery boing.
+  boing() {
+    if (this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(560, t + 0.16); o.frequency.exponentialRampToValueAtTime(300, t + 0.5);
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 22; const lg = ctx.createGain(); lg.gain.value = 26; lfo.connect(lg).connect(o.frequency);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.22, t + 0.015); g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    o.connect(g).connect(this.bus); o.start(t); lfo.start(t); o.stop(t + 0.6); lfo.stop(t + 0.6);
+  }
+  // Fade everything in or out (entering and leaving the race).
+  setActive(on) {
+    this.master.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.15);
+    if (this.music) { if (on) this.music.play().catch(() => {}); else this.music.pause(); }
+  }
   hypeLost() { if (this.ctx.state !== 'running') return; this.tone(392, 0, 0.25, 'sawtooth', 0.05); this.tone(293.7, 0.12, 0.4, 'sawtooth', 0.05); }
   beep(high) { if (this.ctx.state === 'running') this.tone(high ? 880 : 440, 0, high ? 0.7 : 0.25, 'square', 0.07, this.master); }
   bell() { if (this.ctx.state !== 'running') return; [0, 0.18].forEach((d) => { this.tone(1046.5, d, 1.2, 'sine', 0.12); this.tone(2093, d, 0.6, 'sine', 0.04); }); }
@@ -369,6 +418,7 @@ export class Sfx {
     el.preload = 'auto';
     let i = 0;
     const next = () => { el.src = tracks[i % tracks.length]; i++; el.play().catch(() => {}); };
+    this.restart = () => { i = 0; next(); };
     el.addEventListener('ended', next);
     this.ctx.createMediaElementSource(el).connect(this.musicGain);
     this.music = el;
@@ -376,5 +426,7 @@ export class Sfx {
   }
 
   duckMusic(on) { this.musicGain.gain.setTargetAtTime(on ? 0.25 : 0.55, this.ctx.currentTime, 0.3); }
+  // Start the playlist again from its first track.
+  restartMusic() { if (this.music && this.restart) this.restart(); }
 }
 

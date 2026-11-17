@@ -6,9 +6,13 @@
 //   trampolines, and noses down in the air.
 // - The jet pump only pushes while the intake (under the stern) is wet. In
 //   the air the engine unloads and revs up, and there is no steering.
-// - Steering turns the jet nozzle, so turning needs thrust (a little
+// - Steering turns the jet nozzle, so turning needs thrust (some
 //   off-throttle steering is kept, like modern skis). A deep keel resists
 //   sliding sideways, so the hull carves with a small drift.
+// - How hard it can turn depends on speed: tight at low speed, and at high
+//   speed limited to about 1.5 g of cornering, so small hand movements stay
+//   small on the water. Carving costs speed, like a real hull: hold a hard
+//   turn and it slows down by itself to a speed where the turn is tight.
 
 const G = 9.81;
 const MASS = 350;
@@ -23,12 +27,15 @@ export const TOP_SPEED = 19.5;
 const THRUST = MASS * 6.2;                // full-throttle jet thrust, N
 const LIN_DRAG = 55;
 const QUAD_DRAG = (THRUST - LIN_DRAG * TOP_SPEED) / (TOP_SPEED * TOP_SPEED);
-const TURN = 1.2;                         // rad/s at full lock and throttle
+const TURN = 1.2;                         // rad/s at full lock, at low speed
+const LAT_ACCEL = 15;                     // m/s² of cornering at full lock, at speed
+const CARVE = 0.18;                       // drag per unit of cornering force
 export const BOOST = 0.55;                // extra thrust while boosting
 
 export class Craft {
   constructor() {
     this.thrustScale = 1;
+    this.steerLag = 0.09;                   // seconds for the nozzle to follow the bar
     this.reset(0, 0, 0);
   }
 
@@ -102,7 +109,10 @@ export class Craft {
 
     // Forces along the hull.
     let ff = thrust;
-    if (wet > 0) ff -= (LIN_DRAG * vf + QUAD_DRAG * vf * Math.abs(vf)) * (0.35 + 0.65 * wet) * (onRamp ? 0.3 : 1);
+    if (wet > 0) {
+      ff -= (LIN_DRAG * vf + QUAD_DRAG * vf * Math.abs(vf)) * (0.35 + 0.65 * wet) * (onRamp ? 0.3 : 1);
+      ff -= Math.sign(vf) * CARVE * MASS * Math.abs(this.yawRate * vf) * wet;
+    }
     ff -= 0.4 * vf * Math.abs(vf); // air
     // Sideways: the keel kills slip quickly in the water.
     const fr = -vr * MASS * (wet > 0 ? 3.2 * (0.4 + 0.6 * wet) : 0.05);
@@ -118,12 +128,13 @@ export class Craft {
     if (this.pitch < -0.55) { this.pitch = -0.55; this.pitchRate = Math.max(0, this.pitchRate); }
 
     // Steering through the nozzle (plus a little off-throttle steering).
-    this.steer += (ctl.steer - this.steer) * Math.min(1, h / 0.12);
+    this.steer += (ctl.steer - this.steer) * Math.min(1, h / this.steerLag);
     let targetYaw = 0;
     if (this.intakeWet) {
-      const authority = 0.28 + 0.72 * Math.min(1, this.rpm);
-      targetYaw = this.steer * TURN * authority * Math.min(1, Math.max(0.25, Math.abs(vf) / 6));
-      this.yawRate += (targetYaw - this.yawRate) * Math.min(1, h / 0.22);
+      const authority = 0.4 + 0.6 * Math.min(1, this.rpm);
+      const rate = Math.min(TURN * Math.min(1, Math.max(0.25, Math.abs(vf) / 6)), LAT_ACCEL / Math.max(4, Math.abs(vf)));
+      targetYaw = this.steer * rate * authority;
+      this.yawRate += (targetYaw - this.yawRate) * Math.min(1, h / 0.2);
     } else {
       this.yawRate *= 1 - Math.min(1, h * 0.6);
     }

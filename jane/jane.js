@@ -2,7 +2,10 @@
 // conversation around them:
 //   scene:arrived     -> she appears, welcomes the player, offers the video
 //   scene:video-start -> she steps out (the conversation is closed)
-//   scene:video-end   -> she's back, chats, offers the jetski ride
+//   scene:video-end   -> she's back, chats, offers the jetski ride: a toy
+//                        jetski floats in front of the player, touching it starts
+//                        the race (api.startJetski, in this same session)
+//   scene:jetski-end  -> back in the room, she reacts to the result
 //
 // Live mode talks through an ElevenLabs agent (speech-to-text, LLM and her
 // voice, all streamed, so she starts answering the moment you stop talking).
@@ -11,8 +14,8 @@
 import * as THREE from 'three';
 import { createAvatar } from './avatar.js';
 import { AGENT_ID, MODE, STAND_DISTANCE, STAND_OFFSET } from './config.js';
-import { systemPrompt, FIRST_MESSAGES, SCRIPTED } from './persona.js';
-import { makeCaption, makeOrb } from './ui.js';
+import { systemPrompt, FIRST_MESSAGES, SCRIPTED, backLines } from './persona.js';
+import { makeCaption, makeJetskiButton } from './ui.js';
 
 const JETSKI_URL = './jetski/';
 
@@ -31,15 +34,32 @@ export function createJane(api) {
   caption.position.set(0, 2.02, 0);
   root.add(caption);
 
-  const jetskiOrb = makeOrb('Ride the jetski', 0x37b6e6);
-  jetskiOrb.visible = false;
-  scene.add(jetskiOrb);
-  jetskiOrb.userData.onPress = () => goJetski('orb');
+  // The floating jetski she offers after the video.
+  const jetskiBtn = makeJetskiButton('Touch to ride');
+  scene.add(jetskiBtn);
+  jetskiBtn.userData.onPress = () => goJetski('button');
+  // It appears within reach, straight in front of where the player is looking
+  // and below eye level (they may have sat down or moved). Straight ahead, so
+  // they touch it facing forward: the race seats them the way they face then.
+  function showJetski() {
+    if (st.leaving || jetskiBtn.visible || (st.phase !== 'after' && st.phase !== 'back')) return;
+    const head = headWorld();
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cameraObj().getWorldQuaternion(new THREE.Quaternion())).setY(0);
+    // Looking straight up or down: toward Jane instead.
+    if (dir.lengthSq() < 0.05) dir.set(root.position.x - head.x, 0, root.position.z - head.z);
+    if (dir.lengthSq() < 0.0001) dir.set(0, 0, -1);
+    dir.normalize();
+    // (On a flat screen it sits further out and higher, to be in the picture.)
+    const flat = !renderer.xr.isPresenting;
+    jetskiBtn.position.copy(head).addScaledVector(dir, flat ? 0.8 : 0.52);
+    jetskiBtn.position.y = Math.max(0.55, head.y - (flat ? 0.14 : 0.3));
+    jetskiBtn.userData.show();
+  }
 
   const st = {
-    phase: 'idle', // idle | welcome | video | after
+    phase: 'idle', // idle | welcome | video | after | jetski | back
     shownAt: -1, t: 0, history: [], talking: false, offeredVideo: false,
-    conv: null, connecting: false, leaving: false,
+    conv: null, connecting: false, leaving: false, result: null,
   };
 
   // ---------- placement ----------
@@ -55,9 +75,6 @@ export function createJane(api) {
     else root.position.copy(pos).addScaledVector(fwd, STAND_DISTANCE).addScaledVector(left, STAND_OFFSET);
     root.position.y = 0;
     root.lookAt(head.x, 0, head.z);
-    // Jetski orb floats to the player's right, at chest height.
-    jetskiOrb.position.copy(pos).addScaledVector(fwd, 0.6).addScaledVector(left, -0.35);
-    jetskiOrb.position.y = Math.max(0.9, head.y - 0.35);
   }
   const cameraObj = () => (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   function headWorld() {
@@ -82,7 +99,7 @@ export function createJane(api) {
     },
     show_video_button: () => { api.showPlayBall && api.showPlayBall(true); return 'The play button is floating in front of the guest.'; },
     start_jetski: () => { setTimeout(() => goJetski('agent'), 3500); return 'Loading the jetski race now. Say a quick see-you-on-the-water.'; },
-    show_jetski_button: () => { jetskiOrb.visible = true; return 'The jetski button is floating next to the guest.'; },
+    show_jetski_button: () => { showJetski(); return 'The little toy jetski is floating in front of the guest. Touching it starts the race.'; },
     gesture: ({ name } = {}) => { avatar.gesture(name, st.t); return 'ok'; },
     set_mood: ({ mood } = {}) => { avatar.setMood(mood); return 'ok'; },
   };
@@ -96,7 +113,12 @@ export function createJane(api) {
       st.conv = await Conversation.startSession({
         agentId: AGENT_ID,
         connectionType: 'webrtc',
-        overrides: { agent: { prompt: { prompt: systemPrompt(phase, st.history) }, firstMessage: FIRST_MESSAGES[phase] } },
+        overrides: {
+          agent: {
+            prompt: { prompt: systemPrompt(phase, st.history, st.result) },
+            firstMessage: typeof FIRST_MESSAGES[phase] === 'function' ? FIRST_MESSAGES[phase](st.result) : FIRST_MESSAGES[phase],
+          },
+        },
         clientTools: tools,
         onMessage: ({ source, message }) => say(message, source === 'user' ? 'user' : 'jane'),
         onModeChange: ({ mode }) => {
@@ -108,7 +130,7 @@ export function createJane(api) {
             st.offeredVideo = true;
             api.showPlayBall && api.showPlayBall(true);
           }
-          if (mode === 'listening' && phase === 'after') jetskiOrb.visible = true;
+          if (mode === 'listening' && (phase === 'after' || phase === 'back')) showJetski();
         },
         onError: (message) => console.warn('Jane:', message),
         onDisconnect: () => { st.conv = null; st.talking = false; avatar.setListening(false); },
@@ -134,7 +156,18 @@ export function createJane(api) {
   function speak(line, then) {
     say(line);
     st.talking = true;
-    const done = () => { st.talking = false; then && then(); };
+    // Where the browser has no voice the speech ends at once: the caption
+    // still stays up long enough to read before the next line.
+    const readBy = performance.now() + 1200 + line.length * 45;
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      st.talking = false;
+      const wait = readBy - performance.now();
+      if (!then) return;
+      if (wait > 0) setTimeout(then, wait); else then();
+    };
     if (!('speechSynthesis' in window)) { setTimeout(done, 1000 + line.length * 55); return; }
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(line.replace(/\*[^*]*\*/g, ''));
@@ -148,15 +181,20 @@ export function createJane(api) {
     clearTimeout(scriptTimer);
     scriptTimer = setTimeout(() => { if (st.talking) done(); }, 2500 + line.length * 80);
   }
+  let scriptRun = 0;
   function startScripted(phase) {
-    const lines = SCRIPTED[phase] || [];
+    const lines = phase === 'back' ? backLines(st.result) : SCRIPTED[phase] || [];
+    const run = ++scriptRun;
     let i = 0;
     const next = () => {
+      if (run !== scriptRun) return; // a newer script has taken over
       if (st.phase !== phase || i >= lines.length) {
         if (phase === 'welcome' && st.phase === 'welcome') api.showPlayBall && api.showPlayBall(true);
-        if (phase === 'after' && st.phase === 'after') jetskiOrb.visible = true;
+        if (st.phase === phase) showJetski();
         return;
       }
+      // The jetski pops up as she starts the line that points at it (her last).
+      if (i === lines.length - 1) showJetski();
       const { text, gesture, mood } = lines[i++];
       if (gesture) avatar.gesture(gesture, st.t);
       if (mood) avatar.setMood(mood);
@@ -165,9 +203,15 @@ export function createJane(api) {
     next();
   }
 
-  function begin(phase) {
+  function begin(phase, result = null) {
     st.phase = phase;
-    if (MODE === 'off') return;
+    st.result = result;
+    st.leaving = false;
+    if (MODE === 'off') {
+      // No host: the jetski still shows up after the video and after a ride.
+      if (phase === 'after' || phase === 'back') { place(); showJetski(); }
+      return;
+    }
     place();
     root.visible = true;
     st.shownAt = st.t;
@@ -176,11 +220,22 @@ export function createJane(api) {
     else startScripted(phase);
   }
 
+  // Off to the race. It runs inside this page and this session
+  // (api.startJetski); if the race could not be loaded, its own page opens.
   function goJetski(why) {
     if (st.leaving) return;
     st.leaving = true;
     console.info('Jane: off to the jetski via', why);
     stopLive();
+    clearTimeout(scriptTimer);
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    st.talking = false;
+    jetskiBtn.userData.hide();
+    if (api.startJetski && api.startJetski()) {
+      st.phase = 'jetski';
+      root.visible = false;
+      return;
+    }
     const session = renderer.xr.getSession();
     const go = () => { location.href = JETSKI_URL + '?from=jane'; };
     if (session) session.end().then(go, go); else go();
@@ -189,12 +244,12 @@ export function createJane(api) {
   // ---------- scene events ----------
 
   if (MODE !== 'off' && api) api.autoPlayBall = false;
-  // Flat preview: click the jetski orb.
+  // Flat preview: click the jetski.
   renderer.domElement.addEventListener('click', (e) => {
-    if (renderer.xr.isPresenting || !jetskiOrb.visible) return;
+    if (renderer.xr.isPresenting || !jetskiBtn.visible || st.phase === 'jetski') return;
     const rc = new THREE.Raycaster();
     rc.setFromCamera(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
-    if (rc.intersectObject(jetskiOrb.userData.ball).length) jetskiOrb.userData.click();
+    if (rc.intersectObject(jetskiBtn.userData.hit).length) jetskiBtn.userData.click();
   });
   addEventListener('scene:arrived', () => begin('welcome'));
   addEventListener('scene:video-start', () => {
@@ -202,9 +257,10 @@ export function createJane(api) {
     if ('speechSynthesis' in window) speechSynthesis.cancel();
     stopLive();
     root.visible = false;
-    jetskiOrb.visible = false;
+    jetskiBtn.userData.hide();
   });
   addEventListener('scene:video-end', () => begin('after'));
+  addEventListener('scene:jetski-end', (e) => begin('back', e.detail || null));
 
   // ---------- per frame ----------
 
@@ -212,13 +268,14 @@ export function createJane(api) {
   function update(t, dt, frame) {
     st.t = t;
     // The sequence was replayed: step out until the player arrives again.
-    if (root.visible && api.state && api.state.running && !api.state.arrived) {
+    if ((root.visible || jetskiBtn.visible) && api.state && api.state.running && !api.state.arrived) {
       st.phase = 'idle';
-      root.visible = jetskiOrb.visible = false;
+      root.visible = false;
+      jetskiBtn.userData.hide();
       if ('speechSynthesis' in window) speechSynthesis.cancel();
       stopLive();
     }
-    if (!root.visible && !jetskiOrb.visible) return;
+    if (!root.visible && !jetskiBtn.visible) return;
     head.copy(headWorld());
     avatar.lookAt(head);
 
@@ -238,7 +295,7 @@ export function createJane(api) {
     caption.lookAt(head);
     caption.userData.update(t);
 
-    if (jetskiOrb.visible) jetskiOrb.userData.update(t, head, renderer, frame, api.rig);
+    if (jetskiBtn.visible) jetskiBtn.userData.update(t, head, renderer, frame, api.rig);
   }
 
   // Ask for the microphone while the page still has focus (from the Enter
@@ -253,6 +310,6 @@ export function createJane(api) {
     }
   }
 
-  window.__jane = { st, begin, tools, avatar, root };
+  window.__jane = { st, begin, tools, avatar, root, jetskiBtn, goJetski };
   return { update, prepareMic };
 }
