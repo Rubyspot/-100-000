@@ -20,35 +20,50 @@ The game is a module (`race.js`). It runs in two places:
 4. **West canal**: narrower, quicker turns, a second arch, and a ramp that throws you out of the rocks back
    into the lagoon for the finish.
 
-The islands, canals and stacks are generated in `world.js` (limestone with strata and stains, bushes and
-palms on top, sand beaches, inflatable ramps, buoys and bunting in pink and yellow). The water is clear:
-you see the sand bed and sea grass through it, pale in the shallows and deep blue outside the lagoon, with
-foam at the waterline, cliff shadows and sun glitter. Swell calms down in the canals, the same on the GPU
-and in the physics.
+The islands, canals and stacks are generated in `world.js`: limestone towers with near-vertical sides and
+a jungle crown; the stone broken into blocks and chips that catch the light face by face, with open joints,
+pits in patches, a ledge here and there, rain streaks and rust stains; round leaf clumps with ragged
+outlines; palms with ringed trunks and arching fronds that let the sun through; sand beaches, inflatable
+ramps, buoys and bunting in pink and yellow.
+
+The water (`ocean.js`) is open sea, the way the first build drew it: a swell you ride over, a deep body
+colour in the wave faces turned toward you, the sky mirrored in the faces turned away (rock and trees
+instead of sky inside the canals), a road of sun glitter toward the afternoon sun, light glowing through
+the crests, whitecaps, foam along the shore. Its colour comes from the depth: pale sand and dark sea grass
+show through the shallows off the beaches, the lagoon runs turquoise to teal, and the open sea is deep
+blue. Cliffs throw their shadows on it. Swell calms down in the canals, the same on the GPU and in the
+physics.
 
 ## Controls (hands first, one hand is enough)
 
 - When the ride starts, the seat is placed from where your head is, sitting or standing, and re-placed if
   you sit down or move before grabbing the bar. The handlebar sits on a riser: the grips are 36 cm below
   and 42 cm ahead of your eyes (`?bar=below,ahead`, `?riser=`).
-- **Make a fist (or pinch) on a grip** to go: full throttle while you hold it, open the hand to coast. The
-  bar comes to your hand if you grab a little off the grip. A glove shows while you hold on.
-- **Steer by turning the fist**: like a dial (35° is full lock), like a handlebar (45°), or by pushing the
-  grip forward and back around the bar. They add up. The pose you grab with is the neutral.
+- **The right hand is the throttle.** Make a fist (or pinch) on the right grip to go. The index finger is
+  the lever, as on a real jetski: wrapped around the grip it is full throttle, lifted off it eases off to
+  nothing while the other fingers keep hold. Opening the hand lets go. The bar comes to your hand if you
+  grab a little off the grip, and a glove shows while you hold on. `?throttle=any` lets either hand do it.
+- **One hand is enough to steer**, either one: turn the fist like a dial, like a handlebar, or push the
+  grip forward and back around the bar. They add up, and the pose you grab with is the neutral. A left
+  hand alone holds and steers; the dash then says which hand makes it go.
+- **A small turn of the hand goes a long way**: full lock comes at about 27° of dial (35° divided by the
+  steering gain, 1.3). `?steer=1` is the calmer setting from before, `?steer=1.6` is quicker still.
 - **Both hands** on the bar steer like a real handlebar.
 - The steering goes through a One Euro filter, a small dead zone and a soft curve around the middle, then
   the jetski's own steering lag, so small tremors don't reach the hull. Turn rate is limited by cornering
   grip at speed, and the view never pitches or rolls with the hull.
 - A hand that drops out of tracking for under half a second keeps its grip.
-- Fallbacks: controllers (trigger or grip = go, tilt the controller or use the thumbstick to steer, A/B on
-  the results) and the keyboard in the flat preview (W/↑ go, A/D or ←/→ steer, Space start, R again,
+- Fallbacks: controllers (right trigger = go; hold a trigger or a grip button and tilt that controller, or
+  use the thumbstick, to steer; A/B on the results) and the keyboard in the flat preview (W/↑ go, A/D or ←/→ steer, Space start, R again,
   Esc exit).
 
 ## Mechanics
 
-- **Follow the bills.** The flock (Ilia's rigged seagull) flies about 60 m ahead and drops bills (Ilia's
-  bill mesh) every 10 m along the racing line. A bill within 3.4 m flies to you, and from up to 5 m while
-  your combo is low, so the money comes to a rider who is struggling.
+- **Follow the bills.** The flock (Ilia's rigged seagull) flies about 60 m ahead and drops bills every
+  10 m along the racing line. A bill is Ilia's `Bill_03_Gentle_Twist` mesh, a thin twisted sheet, drawn
+  1.45 m wide with a printed $100 face on both sides, lit by the sun and turning slowly so the twist shows;
+  a golden halo behind each one marks the trail from far away. A bill within 3.4 m flies to you, and from
+  up to 5 m while your combo is low, so the money comes to a rider who is struggling.
 - **Crispy combo**: each bill in a row is worth $250 more, up to $2,500 at x10. A missed bill costs one
   step, a wall hit three. The combo also adds a little thrust.
 - **Golden bills** hang in the air past each of the four ramps: $10,000 and a boost. Long jumps boost too.
@@ -91,11 +106,12 @@ enclosed. Jane's engine and the gulls are positioned in space. The Crispy J play
 `?autostart` (straight to the preview), `?autopilot` (rides itself; `=wander` drifts like a first-timer,
 `=sloppy` weaves into walls), `?chase`
 (`=jane` looks at her), `?map`, `?at=N` (start at control point N), `?debug` (fps on the dash,
-`window.simulate(seconds)`), `?bar=0.36,0.42`, `?riser=0.12`, `?fb=0.9` (headset resolution scale),
+`window.simulate(seconds)`), `?bar=0.36,0.42`, `?riser=0.12`, `?steer=1.3` (steering gain),
+`?throttle=any` (either hand is the throttle), `?fb=0.9` (headset resolution scale),
 `?music=0`, `?vignette=0`, `?streaks=0`, `?heave=0` (the view keeps its height), `?jane=simple` (no scan).
 
-In the opening: `?bar=`, `?riser=`, `?vignette=0`, `?streaks=0`, `?heave=0`, `?music=0`, `?debug` and
-`?autopilot` work the same way, `?aa=1` turns multisampling on for the session, and `?race=0` leaves the
+In the opening: `?bar=`, `?riser=`, `?steer=`, `?throttle=any`, `?vignette=0`, `?streaks=0`, `?heave=0`,
+`?music=0`, `?debug` and `?autopilot` work the same way, `?aa=1` turns multisampling on for the session, and `?race=0` leaves the
 race out (the floating jetski then opens this page).
 
 ## Testing without a headset

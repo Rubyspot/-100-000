@@ -59,6 +59,11 @@ export function createWake(scene, ocean) {
         p.age = 0; p.v = Math.min(1, speed / 9) * (wet > 0 ? 1 : 0); p.spread = 0.5 + speed * 0.3;
         pts.unshift(p);
       }
+      // The newest point rides with the stern, so the wake starts under the
+      // hull and never a step behind it.
+      const head = pts[0];
+      head.x = x + Math.sin(yaw) * 1.2; head.z = z + Math.cos(yaw) * 1.2;
+      head.rx = Math.cos(yaw); head.rz = -Math.sin(yaw); head.age = 0;
       for (let i = 0; i < N; i++) {
         const p = pts[i];
         p.age += dt;

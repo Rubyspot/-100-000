@@ -1,8 +1,10 @@
 // The gulls and the money. A flock of Ilia's rigged seagull flies ahead of
-// the player along the racing line and drops $100 bills (Ilia's twisted bill
-// mesh, drawn large) that flutter down and hover over the water. The trail
-// of bills is the way round the course: ride through them to pick them up
-// (a bill that is close enough flies into your hands).
+// the player along the racing line and drops $100 bills that flutter down
+// and hover over the water. A bill is Ilia's Bill_03_Gentle_Twist mesh (a
+// thin twisted sheet of paper), drawn 1.45 m wide, lit by the sun and sky
+// and turning slowly, so its twist catches the light. The trail of bills is
+// the way round the course: ride through them to pick them up (a bill that
+// is close enough flies into your hands).
 // Every bill in a row is worth $250 more than the last, up to $2,500
 // ("Crispy x10"). A missed bill takes one step off the combo and a wall hit
 // three. A golden bill hangs in the air over each ramp: $10,000 and a
@@ -12,6 +14,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { GullVoice } from '../audio.js';
+import { SKY_SAMPLE_GLSL } from './sky.js';
 
 const asset = (path) => new URL(path, import.meta.url).href;
 export const MAX_COMBO = 10;
@@ -19,34 +22,158 @@ export const STEP_VALUE = 250;   // each step of the combo adds this to a bill
 export const GOLD_VALUE = 10000;
 const FLOCK = 5;
 const LEAD = 62;          // how far ahead of the player the flock flies, metres
-const BILL_W = 0.95;      // drawn width of a bill, metres
+const BILL_W = 1.45;      // drawn width of a bill, metres
+const BILL_LEN = 773.66;  // length of the bill mesh in its own units
+const SPIN = 1.5;         // a hovering bill turns this fast, rad/s
 // A bill this close to the jetski flies to the rider, metres. The reach is
 // longer while the combo is low, so the money comes to a rider who is
 // struggling, and tightens as the combo climbs.
 const PICK = 3.4, PICK_HELP = 1.6;
 const SPACING = 10;       // between bills in a run, metres
 
+// The printed face: a $100 note in the song's spirit (engraved green, a gold
+// 100, a blue ribbon, pink seals), bold enough to read from across the water.
 function makeBillTexture() {
-  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 436;
+  const W = 1024, H = 448;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 1024, 436);
-  grad.addColorStop(0, '#d6ebc6'); grad.addColorStop(0.5, '#bfe0b0'); grad.addColorStop(1, '#d3e6be');
-  g.fillStyle = grad; g.fillRect(0, 0, 1024, 436);
-  g.strokeStyle = '#2f6b45'; g.lineWidth = 22; g.strokeRect(14, 14, 996, 408);
-  g.lineWidth = 5; g.strokeRect(46, 46, 932, 344);
-  g.fillStyle = '#eef0d8'; g.beginPath(); g.ellipse(512, 218, 124, 152, 0, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = '#2f6b45'; g.lineWidth = 7; g.stroke();
-  g.fillStyle = '#2f6b45';
-  g.font = 'bold 170px Georgia, serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('$', 512, 224);
-  g.font = 'bold 104px Georgia, serif';
-  g.fillText('100', 158, 118); g.fillText('100', 866, 322);
-  g.font = 'bold 76px Georgia, serif'; g.fillStyle = '#c9a646';
-  g.fillText('100', 870, 114);
-  g.fillStyle = '#2f6b45'; g.font = 'bold 36px Georgia, serif';
-  g.fillText('ONE HUNDRED', 512, 394);
-  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const ink = '#1d5438', pink = '#e0407f', gold = '#b8892a';
+  const paper = g.createRadialGradient(W / 2, H / 2, 40, W / 2, H / 2, 580);
+  paper.addColorStop(0, '#edf2dc'); paper.addColorStop(1, '#cfe1c1');
+  g.fillStyle = paper; g.fillRect(0, 0, W, H);
+  // Fine engraved waves across the field.
+  g.lineWidth = 1.5; g.strokeStyle = 'rgba(29,84,56,.20)';
+  for (let k = 0; k < 40; k++) {
+    g.beginPath();
+    for (let x = 52; x <= W - 52; x += 8) {
+      const y = H / 2 + Math.sin(x * 0.0123 + k * 0.157) * 158 * Math.cos(k * 0.0785) + Math.sin(x * 0.05 + k) * 5;
+      if (x === 52) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  // The frame: a heavy band with a scalloped inner edge and a fine line.
+  g.strokeStyle = ink; g.lineWidth = 22; g.strokeRect(15, 15, W - 30, H - 30);
+  g.fillStyle = ink;
+  for (let x = 40; x < W - 30; x += 22) { g.beginPath(); g.arc(x, 28, 9, 0, Math.PI); g.fill(); g.beginPath(); g.arc(x, H - 28, 9, Math.PI, 0); g.fill(); }
+  for (let y = 40; y < H - 30; y += 22) { g.beginPath(); g.arc(28, y, 9, -Math.PI / 2, Math.PI / 2); g.fill(); g.beginPath(); g.arc(W - 28, y, 9, Math.PI / 2, -Math.PI / 2); g.fill(); }
+  g.lineWidth = 3; g.strokeRect(50, 50, W - 100, H - 100);
+  // The blue ribbon, right of the middle.
+  g.fillStyle = '#3f74b4'; g.fillRect(606, 52, 30, H - 104);
+  g.fillStyle = 'rgba(255,255,255,.55)';
+  for (let y = 66; y < H - 70; y += 26) { g.beginPath(); g.moveTo(610, y + 12); g.lineTo(621, y); g.lineTo(632, y + 12); g.lineTo(621, y + 7); g.fill(); }
+  // The oval where the portrait would be: rays, and the song's dollar sign.
+  const ox = 452, oy = H / 2 + 4, rx = 118, ry = 150;
+  g.save();
+  g.beginPath(); g.ellipse(ox, oy, rx, ry, 0, 0, Math.PI * 2); g.clip();
+  g.fillStyle = '#f3f5e3'; g.fillRect(ox - rx, oy - ry, rx * 2, ry * 2);
+  g.strokeStyle = 'rgba(29,84,56,.30)'; g.lineWidth = 2;
+  for (let a = 0; a < 72; a++) { const an = a / 72 * Math.PI * 2; g.beginPath(); g.moveTo(ox + Math.cos(an) * 54, oy + Math.sin(an) * 70); g.lineTo(ox + Math.cos(an) * 200, oy + Math.sin(an) * 200); g.stroke(); }
+  g.restore();
+  g.strokeStyle = ink; g.lineWidth = 9; g.beginPath(); g.ellipse(ox, oy, rx, ry, 0, 0, Math.PI * 2); g.stroke();
+  g.lineWidth = 2.5; g.beginPath(); g.ellipse(ox, oy, rx + 12, ry + 12, 0, 0, Math.PI * 2); g.stroke();
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = ink; g.font = 'bold 206px Georgia, "Times New Roman", serif';
+  g.fillText('$', ox, oy + 8);
+  // The numerals: engraved green top left and top right, the big gold one
+  // bottom right.
+  g.font = 'bold 118px Georgia, "Times New Roman", serif';
+  g.fillText('100', 184, 126);
+  g.font = 'bold 60px Georgia, "Times New Roman", serif';
+  g.fillText('100', W - 122, 106);
+  g.font = 'bold 150px Georgia, "Times New Roman", serif';
+  g.fillStyle = '#7d5a12'; g.fillText('100', 829, H - 122);
+  g.fillStyle = gold; g.fillText('100', 825, H - 126);
+  // Seals and serial numbers in the song's pink.
+  g.strokeStyle = pink; g.fillStyle = pink; g.lineWidth = 5;
+  g.beginPath(); g.arc(724, 150, 42, 0, Math.PI * 2); g.stroke();
+  g.lineWidth = 2; g.beginPath(); g.arc(724, 150, 33, 0, Math.PI * 2); g.stroke();
+  g.font = 'bold 42px Georgia, "Times New Roman", serif'; g.fillText('CJ', 724, 153);
+  g.font = 'bold 27px "Courier New", monospace';
+  g.fillText('CJ 00100000 K', 190, 212); g.fillText('CJ 00100000 K', 860, 196);
+  // Lettering.
+  g.fillStyle = ink;
+  g.font = 'bold 26px Georgia, "Times New Roman", serif';
+  g.fillText('C R I S P Y   J', 748, 76);
+  g.font = 'bold 19px Georgia, "Times New Roman", serif';
+  g.fillText('SEAGULLS LOVE TOO', 190, 256);
+  g.font = 'bold 34px Georgia, "Times New Roman", serif';
+  g.fillText('ONE HUNDRED', 190, 318);
+  g.fillText('DOLLARS', 190, 360);
+  // The creases of a note that has been in a pocket.
+  for (const [x, a] of [[W / 2, 0.20], [W / 4, 0.10], [W * 3 / 4, 0.10]]) {
+    const cr = g.createLinearGradient(x - 9, 0, x + 9, 0);
+    cr.addColorStop(0, 'rgba(0,0,0,0)'); cr.addColorStop(0.45, `rgba(20,40,20,${a})`); cr.addColorStop(0.55, `rgba(255,255,255,${a * 1.6})`); cr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = cr; g.fillRect(x - 9, 0, 18, H);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   return t;
+}
+
+// The mesh comes faceted (every triangle has its own corners). A sheet of
+// paper is smooth: average the normals of the faces that meet at a point,
+// front and back kept apart.
+function smoothBill(source) {
+  const geo = source.index ? source.toNonIndexed() : source.clone();
+  const p = geo.attributes.position, n = p.count, face = new Float32Array(n * 3), out = new Float32Array(n * 3);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let t = 0; t < n; t += 3) {
+    a.fromBufferAttribute(p, t); b.fromBufferAttribute(p, t + 1); c.fromBufferAttribute(p, t + 2);
+    b.sub(a); c.sub(a); b.cross(c); // length = twice the area: bigger faces count for more
+    for (let k = 0; k < 3; k++) b.toArray(face, (t + k) * 3);
+  }
+  const at = new Map();
+  for (let i = 0; i < n; i++) {
+    const key = Math.round(p.getX(i) * 20) + ',' + Math.round(p.getY(i) * 20) + ',' + Math.round(p.getZ(i) * 20);
+    if (!at.has(key)) at.set(key, []);
+    at.get(key).push(i);
+  }
+  for (const group of at.values()) for (const i of group) {
+    a.fromArray(face, i * 3); c.set(0, 0, 0);
+    for (const j of group) { b.fromArray(face, j * 3); if (a.dot(b) > 0.5 * a.length() * b.length()) c.add(b); }
+    c.normalize().toArray(out, i * 3);
+  }
+  geo.setAttribute('normal', new THREE.BufferAttribute(out, 3));
+  return geo;
+}
+
+// Paper in the sun: lit on the side that faces it, glowing a little where
+// the sun is behind the sheet, with the sky and the water filling in.
+function makeBillMaterial(sky, map, { tint = 0xffffff, sheen = 0.16, lift = 0 } = {}) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...sky.uniforms, map: { value: map }, tint: { value: new THREE.Color(tint) }, sheen: { value: sheen }, lift: { value: lift } },
+    vertexShader: /* glsl */`
+      varying vec2 vUv; varying vec3 vN; varying vec3 vWorld;
+      void main() {
+        mat4 m = modelMatrix * instanceMatrix;
+        vec4 wp = m * vec4(position, 1.0);
+        vUv = uv; vN = mat3(m) * normal; vWorld = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: SKY_SAMPLE_GLSL + /* glsl */`
+      uniform sampler2D map; uniform vec3 tint; uniform float sheen; uniform float lift;
+      uniform vec3 sunLight; uniform vec3 skyLight; uniform vec3 bounceLight;
+      varying vec2 vUv; varying vec3 vN; varying vec3 vWorld;
+      void main() {
+        vec3 N = normalize(vN);
+        vec3 toCam = cameraPosition - vWorld;
+        float dist = length(toCam);
+        vec3 V = toCam / dist;
+        float ndl = dot(N, sunDir);
+        vec3 albedo = texture2D(map, vUv).rgb * tint;
+        vec3 light = sunLight * (max(ndl, 0.0) + 0.42 * max(-ndl, 0.0))
+          + skyLight * (0.6 + 0.4 * N.y)
+          + bounceLight * (0.5 - 0.5 * N.y)
+          + vec3(0.04, 0.15, 0.14) * (0.8 - 0.5 * N.y);
+        // Print keeps its colours: a flatter light, never blown out.
+        light = vec3(0.14 + lift) + light * 0.60;
+        float spec = pow(max(dot(N, normalize(sunDir + V)), 0.0), 14.0) * step(0.0, ndl);
+        vec3 col = albedo * light + sunLight * spec * sheen;
+        col = applyHaze(col, dist);
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
 }
 
 let assets = null;
@@ -62,7 +189,7 @@ export async function loadGullAssets() {
   return assets;
 }
 
-export function createGulls({ scene, world, ocean, listener, onPickup = () => {}, onMiss = () => {} }) {
+export function createGulls({ scene, world, ocean, sky, listener, onPickup = () => {}, onMiss = () => {} }) {
   const course = world.course, { SAMPLES, pts, tans, rights, lineLat, step, length } = course;
   const wrapI = (i) => ((i % SAMPLES) + SAMPLES) % SAMPLES;
   const idxAt = (dist) => wrapI(Math.round(dist / step));
@@ -92,20 +219,25 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
   }
   const total = bills.length;
 
-  const billGeo = assets.billMesh.geometry;
-  const k = BILL_W / 773.66;
+  const billGeo = smoothBill(assets.billMesh.geometry);
+  const k = BILL_W / BILL_LEN;
   // The mesh as the opening places it: scaled, centred on its twist.
   const billBase = new THREE.Matrix4().compose(new THREE.Vector3(0, 0, -8.54 * k), assets.billMesh.quaternion.clone(), new THREE.Vector3(k, k, k));
   const billTex = makeBillTexture();
   const MAXI = 40;
-  const billMesh = new THREE.InstancedMesh(billGeo, new THREE.MeshBasicMaterial({ map: billTex, side: THREE.DoubleSide, toneMapped: false }), MAXI);
-  const goldMesh = new THREE.InstancedMesh(billGeo, new THREE.MeshBasicMaterial({ map: billTex, color: 0xffd23f, side: THREE.DoubleSide, toneMapped: false }), 6);
+  // The mesh is a closed sheet with a printed front and back, so only the
+  // faces toward the eye are drawn.
+  const billMesh = new THREE.InstancedMesh(billGeo, makeBillMaterial(sky, billTex), MAXI);
+  const goldMesh = new THREE.InstancedMesh(billGeo, makeBillMaterial(sky, billTex, { tint: 0xffc61f, sheen: 0.9, lift: 0.22 }), 6);
   for (const m of [billMesh, goldMesh]) { m.frustumCulled = false; m.count = 0; scene.add(m); }
-  // A soft glow behind each bill so the trail reads from far away.
+  // A golden halo behind each bill so the trail reads from far away, against
+  // bright water as well as dark rock. It sits a metre behind the bill (the
+  // bill is drawn clean in front of it), is never smaller than about a
+  // degree, and fades as you come close.
   const glowTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 64;
     const g = c.getContext('2d'), grad = g.createRadialGradient(32, 32, 2, 32, 32, 32);
-    grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.35, 'rgba(255,235,150,.55)'); grad.addColorStop(1, 'rgba(255,210,63,0)');
+    grad.addColorStop(0, 'rgba(255,250,215,1)'); grad.addColorStop(0.3, 'rgba(255,224,96,.85)'); grad.addColorStop(0.65, 'rgba(255,200,40,.32)'); grad.addColorStop(1, 'rgba(255,190,30,0)');
     g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
     return new THREE.CanvasTexture(c);
   })();
@@ -113,13 +245,28 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
   const glowPos = new Float32Array((MAXI + 6) * 3), glowSize = new Float32Array(MAXI + 6);
   glowGeo.setAttribute('position', new THREE.BufferAttribute(glowPos, 3).setUsage(THREE.DynamicDrawUsage));
   glowGeo.setAttribute('size', new THREE.BufferAttribute(glowSize, 1).setUsage(THREE.DynamicDrawUsage));
+  const glowUniforms = { map: { value: glowTex }, viewH: { value: 720 } };
   const glow = new THREE.Points(glowGeo, new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    uniforms: { map: { value: glowTex } },
-    vertexShader: 'attribute float size; void main() { vec4 mv = viewMatrix * vec4(position, 1.0); gl_PointSize = min(70.0, 420.0 * size / max(0.5, -mv.z)); gl_Position = projectionMatrix * mv; }',
-    fragmentShader: 'uniform sampler2D map; void main() { gl_FragColor = texture2D(map, gl_PointCoord) * vec4(1.0, 0.86, 0.45, 0.42); }',
+    transparent: true, depthWrite: false, toneMapped: false,
+    uniforms: glowUniforms,
+    vertexShader: /* glsl */`
+      attribute float size; uniform float viewH; varying float vFade;
+      void main() {
+        vec4 mv = viewMatrix * vec4(position, 1.0);
+        float d = max(0.5, -mv.z);
+        mv.xyz *= (d + 1.0) / d;
+        float px = viewH * 0.5 * projectionMatrix[1][1]; // pixels across one radian
+        vFade = 0.3 + 0.7 * smoothstep(8.0, 30.0, d);
+        gl_PointSize = clamp(size * px / d, 0.017 * px, 0.14 * px);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: 'uniform sampler2D map; varying float vFade; void main() { vec4 c = texture2D(map, gl_PointCoord); gl_FragColor = vec4(c.rgb, c.a * 0.9 * vFade); }',
   }));
   glow.frustumCulled = false;
+  const _view = new THREE.Vector2();
+  glow.onBeforeRender = (renderer, _scene, camera) => {
+    glowUniforms.viewH.value = camera.viewport ? camera.viewport.w : renderer.getDrawingBufferSize(_view).y;
+  };
   scene.add(glow);
 
   // ---------- the flock ----------
@@ -235,7 +382,9 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
       if (b.d > dist + 190) break;
       if (b.state === 0) continue;
       b.t += dt;
-      let scale = b.gold ? 1.7 : 1, spin = 0, tilt = Math.sin(t * 1.3 + b.ph) * 0.16;
+      // It turns slowly on the spot, each bill a little ahead of the last, so
+      // a row of them turns like a wave.
+      let scale = b.gold ? 1.6 : 1, spin = t * SPIN + b.d * 0.08, tilt = Math.sin(t * 1.3 + b.ph) * 0.16;
       if (b.state === 1) {
         // Flutter down from the gull: swing side to side, tumbling, then settle.
         const kf = Math.min(1, b.t / 1.5), e = kf * kf * (3 - 2 * kf);
@@ -243,11 +392,10 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
         b.pos.lerpVectors(b.from, _p, e);
         const sway = Math.sin(b.t * 6 + b.ph) * (1 - e) * 1.2;
         b.pos.x += Math.cos(b.yaw) * sway; b.pos.z -= Math.sin(b.yaw) * sway;
-        spin = (1 - e) * (b.t * 7); tilt += (1 - e) * Math.sin(b.t * 9) * 0.9;
+        spin += (1 - e) * (b.t * 7); tilt += (1 - e) * Math.sin(b.t * 9) * 0.9;
         if (kf >= 1) b.state = 2;
       } else if (b.state === 2) {
         hoverPos(b, t, b.pos);
-        spin = Math.sin(t * 0.9 + b.ph) * 0.5;
         const dx = player.x - b.x, dz = player.z - b.z;
         const reach = PICK + PICK_HELP * (1 - state.combo / MAX_COMBO);
         let got = dx * dx + dz * dz < reach * reach && Math.abs(b.pos.y - (player.y + 1.1)) < (b.gold ? 2.2 : 1.9);
@@ -272,7 +420,7 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
         if (kf >= 1) continue;
         _p.set(player.x - Math.sin(player.yaw) * 0.5, player.y + 1.15, player.z - Math.cos(player.yaw) * 0.5);
         b.pos.lerpVectors(b.from, _p, kf);
-        scale *= 1 - 0.75 * kf; spin = b.t * 30;
+        scale *= 1 - 0.75 * kf; spin += b.t * 30;
       } else if (b.state === 4) {
         const kf = b.t / 0.8;
         if (kf >= 1) continue;
@@ -282,7 +430,7 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
       _m.compose(b.pos, _q, _s.setScalar(scale)).multiply(billBase);
       if (b.gold) { if (ng < 6) goldMesh.setMatrixAt(ng++, _m); }
       else if (nb < MAXI) billMesh.setMatrixAt(nb++, _m);
-      if (np < MAXI + 6 && b.state <= 2) { glowPos[np * 3] = b.pos.x; glowPos[np * 3 + 1] = b.pos.y; glowPos[np * 3 + 2] = b.pos.z; glowSize[np] = b.gold ? 2.6 : 1.5; np++; }
+      if (np < MAXI + 6 && b.state <= 2) { glowPos[np * 3] = b.pos.x; glowPos[np * 3 + 1] = b.pos.y; glowPos[np * 3 + 2] = b.pos.z; glowSize[np] = b.gold ? 3.4 : 2.1; np++; }
     }
     billMesh.count = nb; goldMesh.count = ng;
     billMesh.instanceMatrix.needsUpdate = true; goldMesh.instanceMatrix.needsUpdate = true;

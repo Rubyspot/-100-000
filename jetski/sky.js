@@ -1,12 +1,13 @@
-// Tropical midday sky: a deep blue gradient with fair-weather cumulus and a
+// Tropical afternoon sky: a deep blue gradient with fair-weather cumulus and a
 // bank of towering clouds on the horizon, baked once into an equirectangular
 // texture. The dome and the water's reflections both read that texture, so
 // clouds show up in the water for one lookup. The same sun and sky colours
 // light the rocks, sand and palms (LIGHT_GLSL).
 import * as THREE from 'three';
 
-// High sun, a little ahead and to the right of the start straight (+X).
-export const SUN_DIR = new THREE.Vector3(0.52, 0.82, 0.24).normalize();
+// Afternoon sun, 34 degrees up, ahead and a little to the right of the start
+// straight (+X), so the water ahead of the start carries a road of glitter.
+export const SUN_DIR = new THREE.Vector3(0.753, 0.559, 0.347).normalize();
 export const SUN_COLOR = new THREE.Color(1.0, 0.95, 0.86);    // linear
 export const HAZE_COLOR = new THREE.Color(0.62, 0.79, 0.93);  // distance haze
 
@@ -67,7 +68,7 @@ const BAKE_FRAG = /* glsl */`
     vec2 w = vec2(fbm(p * 0.5 + 3.1), fbm(p * 0.5 - 7.4));
     float f = fbm(p * 0.62 + w * 1.3);
     float big = fbm(p * 0.16 + 21.0);
-    return smoothstep(0.50, 0.74, f * 0.72 + big * 0.38);
+    return smoothstep(0.55, 0.78, f * 0.72 + big * 0.38);
   }
 
   void main() {

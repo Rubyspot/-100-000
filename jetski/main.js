@@ -6,7 +6,8 @@
 // (rides itself; =sloppy weaves into walls), ?chase, ?map, ?at=N (start at
 // control point N), ?debug (fps on the dash, window.simulate(seconds)),
 // ?bar=below,ahead (grips this far below and ahead of the eyes, metres),
-// ?riser=0.12, ?fb=0.9 (headset resolution scale), ?music=0, ?vignette=0,
+// ?riser=0.12, ?steer=1.3 (how strongly the hands steer), ?throttle=any (either
+// hand is the throttle), ?fb=0.9 (headset resolution scale), ?music=0, ?vignette=0,
 // ?heave=0, ?jane=simple (no scan).
 import * as THREE from 'three';
 import { createRace } from './race.js';
@@ -47,6 +48,8 @@ const race = createRace({
     heave: params.get('heave') === '0' ? 0 : 1,
     ...(bar.length === 2 && bar.every(Number.isFinite) ? { below: bar[0], ahead: bar[1] } : {}),
     ...(params.has('riser') ? { riser: num('riser', 0.12) } : {}),
+    ...(params.has('steer') ? { steer: num('steer', 1.3) } : {}),
+    ...(params.get('throttle') === 'any' ? { throttle: 'any' } : {}),
   },
 });
 
