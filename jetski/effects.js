@@ -1,5 +1,6 @@
-// Water effects that follow a jetski: a foam wake ribbon, and spray
-// particles (bow spray, the rooster tail behind the jet, landing bursts).
+// Effects around the jetskis: a foam wake ribbon, spray particles (bow
+// spray, the rooster tail behind the jet, landing bursts), speed streaks and
+// pink and yellow confetti for pick-ups and the finish.
 import * as THREE from 'three';
 
 export function createWake(scene, ocean) {
@@ -15,7 +16,7 @@ export function createWake(scene, ocean) {
   geo.setIndex(idx);
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-    uniforms: { time: { value: 0 }, detailMap: { value: ocean.detail }, foamColor: { value: new THREE.Color(0xfff1ea) }, sunColor: ocean.uniforms.sunColor },
+    uniforms: { time: { value: 0 }, detailMap: { value: ocean.detail }, foamColor: { value: new THREE.Color(0xf4fbff) }, sunColor: ocean.uniforms.sunColor },
     vertexShader: /* glsl */`
       varying vec2 vUv; varying vec2 vW;
       void main() { vUv = uv; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`,
@@ -38,7 +39,7 @@ export function createWake(scene, ocean) {
   mesh.frustumCulled = false;
   scene.add(mesh);
   let acc = 0, fresh = true;
-  const baseFoam = mat.uniforms.foamColor.value.clone(), gold = new THREE.Color(0xffc23a);
+  const baseFoam = mat.uniforms.foamColor.value.clone(), gold = new THREE.Color(0xff8fc6);
   return {
     reset() { fresh = true; },
     // 0..1: tint the wake gold (boost).
@@ -192,6 +193,62 @@ export function createStreaks(parent) {
       lines.visible = want > 0 || p.some((s) => s.live);
       geo.attributes.position.needsUpdate = true;
       geo.attributes.color.needsUpdate = true;
+    },
+  };
+}
+
+// Confetti: little squares in the Crispy colours that pop, flutter and fall.
+export function createConfetti(scene) {
+  const N = 260;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), life = new Float32Array(N), vel = new Float32Array(N * 3), ph = new Float32Array(N);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('life', new THREE.BufferAttribute(life, 1).setUsage(THREE.DynamicDrawUsage));
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false,
+    vertexShader: /* glsl */`
+      attribute vec3 color; attribute float life; varying vec3 vColor; varying float vLife;
+      void main() { vColor = color; vLife = life; vec4 mv = viewMatrix * vec4(position, 1.0);
+        gl_PointSize = (life > 0.0 ? 46.0 : 0.0) / max(0.3, -mv.z); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vColor; varying float vLife;
+      void main() { gl_FragColor = vec4(vColor, min(1.0, vLife * 3.0)); if (gl_FragColor.a < 0.02) discard;
+        #include <colorspace_fragment>
+      }`,
+  });
+  const points = new THREE.Points(geo, mat);
+  points.frustumCulled = false;
+  scene.add(points);
+  const palette = [[1, 0.31, 0.64], [1, 0.82, 0.25], [1, 0.96, 0.88], [0.49, 0.94, 0.78]].map(([r, g, b]) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace));
+  let next = 0, live = 0;
+  return {
+    // n pieces from a point; vx, vz: the speed of whatever threw them.
+    burst(x, y, z, n = 12, power = 3, vx = 0, vz = 0) {
+      for (let k = 0; k < n; k++) {
+        const i = next; next = (next + 1) % N;
+        const a = Math.random() * Math.PI * 2, out = Math.random() * power, c = palette[(Math.random() * palette.length) | 0];
+        pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+        vel[i * 3] = Math.cos(a) * out + vx; vel[i * 3 + 1] = 1.5 + Math.random() * power; vel[i * 3 + 2] = Math.sin(a) * out + vz;
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        life[i] = 0.9 + Math.random() * 0.8; ph[i] = Math.random() * 6.28;
+      }
+      live = 2;
+    },
+    update(dt, t) {
+      if (live <= 0) { points.visible = false; return; }
+      points.visible = true; live -= dt;
+      for (let i = 0; i < N; i++) {
+        if (life[i] <= 0) continue;
+        life[i] -= dt;
+        vel[i * 3 + 1] -= 6.5 * dt;
+        const drag = 1 - Math.min(1, dt * 1.6);
+        vel[i * 3] *= drag; vel[i * 3 + 2] *= drag;
+        pos[i * 3] += (vel[i * 3] + Math.sin(t * 9 + ph[i]) * 0.8) * dt;
+        pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
+        pos[i * 3 + 2] += (vel[i * 3 + 2] + Math.cos(t * 8 + ph[i]) * 0.8) * dt;
+      }
+      geo.attributes.position.needsUpdate = true; geo.attributes.life.needsUpdate = true; geo.attributes.color.needsUpdate = true;
     },
   };
 }

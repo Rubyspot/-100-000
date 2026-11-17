@@ -1,26 +1,37 @@
-// Sunset sky: a gradient with pink, sun-lit clouds, baked once into an
-// equirectangular half-float texture. The dome and the ocean's reflections
-// both read that texture, so clouds show up in the water for one lookup.
+// Tropical midday sky: a deep blue gradient with fair-weather cumulus and a
+// bank of towering clouds on the horizon, baked once into an equirectangular
+// texture. The dome and the water's reflections both read that texture, so
+// clouds show up in the water for one lookup. The same sun and sky colours
+// light the rocks, sand and palms (LIGHT_GLSL).
 import * as THREE from 'three';
 
-// Low sun ahead of the start straight (which runs toward +X).
-export const SUN_DIR = new THREE.Vector3(0.92, 0.075, -0.38).normalize();
-export const SUN_COLOR = new THREE.Color(1.0, 0.62, 0.36);   // linear
-export const HAZE_COLOR = new THREE.Color(0xf3a98e);          // fog for meshes
+// High sun, a little ahead and to the right of the start straight (+X).
+export const SUN_DIR = new THREE.Vector3(0.52, 0.82, 0.24).normalize();
+export const SUN_COLOR = new THREE.Color(1.0, 0.95, 0.86);    // linear
+export const HAZE_COLOR = new THREE.Color(0.62, 0.79, 0.93);  // distance haze
+
+// Uniform values shared by every shader that lights with the sun and sky.
+export const LIGHT = {
+  sunLight: new THREE.Color(1.0, 0.94, 0.84).multiplyScalar(2.05),
+  skyLight: new THREE.Color(0.44, 0.58, 0.80).multiplyScalar(0.95),
+  bounceLight: new THREE.Color(0.34, 0.44, 0.36).multiplyScalar(0.75),
+};
 
 // GLSL shared by everything that samples the baked sky.
 export const SKY_SAMPLE_GLSL = /* glsl */`
   uniform sampler2D skyMap;
   uniform vec3 sunDir;
   uniform vec3 sunColor;
+  uniform vec3 hazeColor;
+  uniform float hazeDensity;
   vec2 skyUv(vec3 d) {
     float u = atan(d.z, d.x) / 6.28318 + 0.5;
     float el = asin(clamp(d.y, -1.0, 1.0));
     float v = (el + 0.15) / (1.5708 + 0.15);
     return vec2(u, clamp(v, 0.0, 1.0));
   }
-  // Gradients with the wrap at u = 0/1 removed, so the seam behind the
-  // sun doesn't drop to the smallest mip and draw a line.
+  // Gradients with the wrap at u = 0/1 removed, so the seam doesn't drop to
+  // the smallest mip and draw a line.
   vec4 skySample(vec3 d) {
     vec2 uv = skyUv(d);
     vec2 gx = dFdx(uv), gy = dFdy(uv);
@@ -28,6 +39,10 @@ export const SKY_SAMPLE_GLSL = /* glsl */`
     return textureGrad(skyMap, uv, gx, gy);
   }
   vec3 skyColor(vec3 d) { return skySample(d).rgb; }
+  // Aerial perspective for anything in the world.
+  vec3 applyHaze(vec3 col, float dist) {
+    return mix(col, hazeColor, 1.0 - exp(-dist * hazeDensity));
+  }
 `;
 
 const BAKE_FRAG = /* glsl */`
@@ -47,6 +62,13 @@ const BAKE_FRAG = /* glsl */`
     for (int i = 0; i < 6; i++) { s += a * noise(p); p = r * p * 2.03 + 11.7; a *= 0.5; }
     return s;
   }
+  // Cumulus cover on a plane above the sea.
+  float cover(vec2 p) {
+    vec2 w = vec2(fbm(p * 0.5 + 3.1), fbm(p * 0.5 - 7.4));
+    float f = fbm(p * 0.62 + w * 1.3);
+    float big = fbm(p * 0.16 + 21.0);
+    return smoothstep(0.50, 0.74, f * 0.72 + big * 0.38);
+  }
 
   void main() {
     float az = (vUv.x - 0.5) * 6.28318;
@@ -54,50 +76,52 @@ const BAKE_FRAG = /* glsl */`
     vec3 d = vec3(cos(el) * cos(az), sin(el), cos(el) * sin(az));
     float h = max(d.y, 0.0);
     float s = max(dot(d, sunDir), 0.0);
-    // Azimuthal closeness to the sun, ignoring height.
-    float sa = max(dot(normalize(d.xz), normalize(sunDir.xz)), 0.0);
 
-    // Sky gradient: peach horizon, rose band, violet, deep blue zenith.
-    vec3 horizon = mix(vec3(0.95, 0.42, 0.30), vec3(1.0, 0.55, 0.22), pow(sa, 3.0));
-    vec3 rose = vec3(0.78, 0.36, 0.48);
-    vec3 violet = vec3(0.30, 0.22, 0.48);
-    vec3 zenith = vec3(0.06, 0.09, 0.26);
-    vec3 col = mix(horizon, rose, smoothstep(0.0, 0.12, h));
-    col = mix(col, violet, smoothstep(0.08, 0.4, h));
-    col = mix(col, zenith, smoothstep(0.35, 1.2, h));
-    col += vec3(1.0, 0.55, 0.25) * (pow(s, 6.0) * 0.9 + pow(s, 2.0) * 0.2) * (1.0 - smoothstep(0.0, 0.5, h));
-    if (d.y < 0.0) col = mix(horizon, horizon * 0.8, smoothstep(0.0, -0.15, d.y));
+    // Blue gradient, pale and bright at the horizon.
+    vec3 zenith = vec3(0.07, 0.23, 0.60);
+    vec3 mid = vec3(0.19, 0.45, 0.84);
+    vec3 horizon = vec3(0.60, 0.79, 0.94);
+    vec3 col = mix(horizon, mid, smoothstep(0.0, 0.32, h));
+    col = mix(col, zenith, smoothstep(0.25, 1.0, h));
+    // Glow around the sun.
+    col += vec3(1.0, 0.9, 0.7) * (pow(s, 24.0) * 0.5 + pow(s, 4.0) * 0.12);
+    if (d.y < 0.0) col = mix(horizon, horizon * vec3(0.78, 0.86, 0.92), smoothstep(0.0, -0.15, d.y));
 
-    // Clouds on a plane above the sea.
     float density = 0.0;
-    vec3 cloud = vec3(0.0);
-    if (d.y > 0.004) {
-      vec2 p = d.xz / (d.y + 0.035) * 0.9;
-      vec2 w = vec2(fbm(p * 0.6 + 3.1), fbm(p * 0.6 - 7.4));
-      float f = fbm(p * 0.75 + w * 1.6);
-      float cover = 0.44 + 0.08 * sin(az * 2.0 + 1.0);
-      density = smoothstep(cover, cover + 0.22, f);
-      // Thin streaks higher up.
-      float cir = fbm(vec2(p.x * 0.25, p.y * 1.8) + w);
-      density = max(density, smoothstep(0.58, 0.8, cir) * 0.55 * smoothstep(0.05, 0.3, h));
-      float thick = smoothstep(cover, cover + 0.5, f);
-      vec3 lit = mix(vec3(1.0, 0.36, 0.58), vec3(1.0, 0.62, 0.36), pow(sa, 5.0));
-      vec3 shade = vec3(0.46, 0.22, 0.46);
-      cloud = mix(lit, shade, thick * 0.75 * (1.0 - pow(s, 3.0) * 0.6));
-      // Bright rims on clouds near the sun.
-      cloud += vec3(1.0, 0.75, 0.45) * pow(s, 10.0) * (1.0 - thick) * 2.5;
-      // Fade into haze at the horizon.
-      float haze = smoothstep(0.0, 0.12, d.y);
+    vec3 cloud = vec3(1.0);
+    if (d.y > 0.003) {
+      vec2 p = d.xz / (d.y + 0.07) * 1.1;
+      density = cover(p);
+      // Light from the sun's side: compare with the cover a step toward it.
+      vec2 toSun = normalize(sunDir.xz + 1e-4) * 0.35;
+      float lit = clamp(0.62 + (density - cover(p + toSun)) * 1.6, 0.0, 1.0);
+      float thick = smoothstep(0.0, 1.0, density);
+      vec3 bright = vec3(1.12, 1.10, 1.06);
+      vec3 shade = vec3(0.56, 0.64, 0.78);
+      cloud = mix(shade, bright, lit * (1.0 - thick * 0.35));
+      cloud += vec3(1.0, 0.92, 0.75) * pow(s, 12.0) * (1.0 - thick) * 0.9;
+      // Tall cloud bank sitting on the horizon.
+      float bank = smoothstep(0.42, 0.7, fbm(vec2(az * 2.2, 3.0)) * 0.7 + fbm(vec2(az * 6.0, el * 9.0)) * 0.5);
+      float bankH = 0.06 + 0.13 * fbm(vec2(az * 3.1 + 5.0, 1.0));
+      float inBank = bank * (1.0 - smoothstep(bankH * 0.55, bankH, d.y));
+      vec3 bankCol = mix(vec3(0.74, 0.82, 0.92), vec3(1.08, 1.05, 1.0), smoothstep(0.0, bankH, d.y));
+      // Thin out toward the horizon haze.
+      float haze = smoothstep(0.0, 0.10, d.y);
       density *= haze;
       cloud = mix(horizon, cloud, haze);
+      cloud = mix(cloud, bankCol, inBank * (1.0 - density));
+      density = max(density, inBank * 0.92);
     }
-    col = mix(col, cloud, density * 0.92);
+    col = mix(col, cloud, density);
     gl_FragColor = vec4(col, density);
   }`;
 
 export function createSky(renderer) {
+  // Half-float keeps the bright cloud tops; fall back to 8-bit where the
+  // headset can't render to it.
+  const canFloat = renderer.extensions.has('EXT_color_buffer_half_float') || renderer.extensions.has('EXT_color_buffer_float');
   const target = new THREE.WebGLRenderTarget(2048, 512, {
-    type: THREE.HalfFloatType,
+    type: canFloat ? THREE.HalfFloatType : THREE.UnsignedByteType,
     generateMipmaps: true,
     minFilter: THREE.LinearMipmapLinearFilter,
     magFilter: THREE.LinearFilter,
@@ -109,8 +133,9 @@ export function createSky(renderer) {
     uniforms: { sunDir: { value: SUN_DIR } },
     vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
     fragmentShader: BAKE_FRAG,
-    depthTest: false, depthWrite: false,
+    depthTest: false, depthWrite: false, toneMapped: false,
   }));
+  quad.frustumCulled = false;
   const bakeScene = new THREE.Scene();
   bakeScene.add(quad);
   const bakeCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -128,6 +153,11 @@ export function createSky(renderer) {
     skyMap: { value: target.texture },
     sunDir: { value: SUN_DIR },
     sunColor: { value: SUN_COLOR },
+    hazeColor: { value: HAZE_COLOR },
+    hazeDensity: { value: 0.00085 },
+    sunLight: { value: LIGHT.sunLight },
+    skyLight: { value: LIGHT.skyLight },
+    bounceLight: { value: LIGHT.bounceLight },
   };
 
   const dome = new THREE.Mesh(
@@ -144,8 +174,8 @@ export function createSky(renderer) {
           vec3 d = normalize(vDir);
           vec4 sky = skySample(d);
           float s = dot(d, sunDir);
-          vec3 sun = sunColor * (smoothstep(0.99935, 0.99965, s) * 30.0 + pow(max(s, 0.0), 900.0) * 4.0 + pow(max(s, 0.0), 90.0) * 0.5);
-          gl_FragColor = vec4(sky.rgb + sun * (1.0 - sky.a * 0.85), 1.0);
+          vec3 sun = sunColor * (smoothstep(0.99955, 0.99985, s) * 40.0 + pow(max(s, 0.0), 1500.0) * 6.0 + pow(max(s, 0.0), 120.0) * 0.6);
+          gl_FragColor = vec4(sky.rgb + sun * (1.0 - sky.a * 0.9), 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
@@ -161,8 +191,12 @@ export function createSky(renderer) {
   envScene.add(envDome);
   const pmrem = new THREE.PMREMGenerator(renderer);
   renderer.xr.enabled = false;
+  const prevTone = renderer.toneMapping;
+  renderer.toneMapping = THREE.NoToneMapping;
   const env = pmrem.fromScene(envScene, 0.02).texture;
+  renderer.toneMapping = prevTone;
   renderer.xr.enabled = prevXr;
+  renderer.setRenderTarget(prevTarget);
   pmrem.dispose();
 
   return { dome, uniforms, texture: target.texture, env };

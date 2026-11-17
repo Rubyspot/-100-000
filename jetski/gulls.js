@@ -1,274 +1,289 @@
-// Seagulls fly ahead of the player and drop $100 bills that flutter down
-// toward the left of the seat, where the free hand can catch them. Each
-// three bills caught bring another gull, up to eight.
+// The gulls and the money. A flock of Ilia's rigged seagull flies ahead of
+// the player along the racing line and drops $100 bills (Ilia's twisted bill
+// mesh, drawn large) that flutter down and hover over the water. The trail
+// of bills is the way round the course: ride through them to pick them up
+// (a bill that is close enough flies into your hands).
+// Every bill in a row is worth $100 more than the last, up to $1,000
+// ("Crispy x10"). Missing a bill or hitting a wall costs some of the combo.
+// A golden bill hangs in the air over each ramp: $2,500 and a boost.
 import * as THREE from 'three';
-import { mergeGeometries } from '../vendor/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { GullVoice } from '../audio.js';
 
-const MAX_BILLS = 40;
-const FALL_SPEED = 2.3;     // m/s
-const CATCH_RADIUS = 0.3;   // m around the palm
+const asset = (path) => new URL(path, import.meta.url).href;
+export const MAX_COMBO = 10;
+const GOLD_VALUE = 2500;
+const FLOCK = 5;
+const LEAD = 62;          // how far ahead of the player the flock flies, metres
+const BILL_W = 0.95;      // drawn width of a bill, metres
+const PICK = 3.1;         // a bill this close to the jetski flies to the rider, metres
 
 function makeBillTexture() {
-  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 218;
+  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 436;
   const g = cv.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 512, 218);
-  grad.addColorStop(0, '#d9e3cf'); grad.addColorStop(0.5, '#c4d6b8'); grad.addColorStop(1, '#d5dcc4');
-  g.fillStyle = grad; g.fillRect(0, 0, 512, 218);
-  g.strokeStyle = '#3f6b4a'; g.lineWidth = 7; g.strokeRect(9, 9, 494, 200);
-  g.lineWidth = 2; g.strokeRect(20, 20, 472, 178);
-  g.fillStyle = '#e9e2cf'; g.beginPath(); g.ellipse(256, 109, 60, 75, 0, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = '#3f6b4a'; g.lineWidth = 3; g.stroke();
-  g.fillStyle = '#3f6b4a'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.font = 'bold 75px Georgia, serif'; g.fillText('$', 256, 111);
-  g.font = 'bold 46px Georgia, serif'; g.fillText('100', 70, 55); g.fillText('100', 442, 165);
-  g.font = 'bold 35px Georgia, serif'; g.fillStyle = '#c9a646'; g.fillText('100', 442, 55);
-  g.fillStyle = '#3f6b4a'; g.font = 'bold 17px Georgia, serif'; g.fillText('ONE HUNDRED', 256, 197);
+  const grad = g.createLinearGradient(0, 0, 1024, 436);
+  grad.addColorStop(0, '#d6ebc6'); grad.addColorStop(0.5, '#bfe0b0'); grad.addColorStop(1, '#d3e6be');
+  g.fillStyle = grad; g.fillRect(0, 0, 1024, 436);
+  g.strokeStyle = '#2f6b45'; g.lineWidth = 22; g.strokeRect(14, 14, 996, 408);
+  g.lineWidth = 5; g.strokeRect(46, 46, 932, 344);
+  g.fillStyle = '#eef0d8'; g.beginPath(); g.ellipse(512, 218, 124, 152, 0, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#2f6b45'; g.lineWidth = 7; g.stroke();
+  g.fillStyle = '#2f6b45';
+  g.font = 'bold 170px Georgia, serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('$', 512, 224);
+  g.font = 'bold 104px Georgia, serif';
+  g.fillText('100', 158, 118); g.fillText('100', 866, 322);
+  g.font = 'bold 76px Georgia, serif'; g.fillStyle = '#c9a646';
+  g.fillText('100', 870, 114);
+  g.fillStyle = '#2f6b45'; g.font = 'bold 36px Georgia, serif';
+  g.fillText('ONE HUNDRED', 512, 394);
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return t;
 }
 
-// Gull built facing -Z (forward), 1.6x life size so it reads from the water.
-function makeGull(mats) {
-  const parts = [];
-  const add = (geo, m) => { geo.applyMatrix4(m); geo.deleteAttribute('uv'); parts.push(geo); };
-  const M = (x, y, z, sx = 1, sy = 1, sz = 1, rx = 0) => new THREE.Matrix4().compose(
-    new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, 0, 0)), new THREE.Vector3(sx, sy, sz));
-  add(new THREE.SphereGeometry(1, 12, 8), M(0, 0, 0, 0.12, 0.1, 0.3));
-  add(new THREE.SphereGeometry(0.085, 10, 8), M(0, 0.07, -0.26));
-  add(new THREE.BoxGeometry(0.15, 0.02, 0.15), M(0, 0.02, 0.32));
-  const body = new THREE.Mesh(mergeGeometries(parts), mats.white);
-  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.12, 6).rotateX(-Math.PI / 2).translate(0, 0.06, -0.39), mats.orange);
-  const g = new THREE.Group();
-  g.add(body, beak);
-  const wings = [];
-  for (const s of [-1, 1]) {
-    const pivot = new THREE.Group();
-    pivot.position.set(0.09 * s, 0.05, -0.02);
-    const inner = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.02, 0.21).translate(0.21 * s, 0, 0), mats.grey);
-    pivot.add(inner);
-    const outer = new THREE.Group();
-    outer.position.x = 0.42 * s;
-    outer.add(new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.016, 0.16).translate(0.16 * s, 0, 0.01), mats.grey));
-    outer.add(new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.018, 0.14).translate(0.27 * s, 0, 0.01), mats.dark));
-    pivot.add(outer);
-    g.add(pivot);
-    wings.push({ pivot, outer, s });
-  }
-  g.userData.wings = wings;
-  return g;
+let assets = null;
+export async function loadGullAssets() {
+  const loader = new GLTFLoader();
+  const [gull, bill] = await Promise.all([
+    loader.loadAsync(asset('../assets/seagull/seagull.glb')),
+    loader.loadAsync(asset('../assets/seagull/bill.glb')),
+  ]);
+  let billMesh = null;
+  bill.scene.traverse((o) => { if (o.isMesh && !billMesh) billMesh = o; });
+  assets = { gull, billMesh };
+  return assets;
 }
 
-export function createGulls({ scene, listener, sfx, ocean }) {
-  const mats = {
-    white: new THREE.MeshLambertMaterial({ color: 0xf4f2ee }),
-    grey: new THREE.MeshLambertMaterial({ color: 0xa8aeb8 }),
-    dark: new THREE.MeshLambertMaterial({ color: 0x25272b }),
-    orange: new THREE.MeshLambertMaterial({ color: 0xf0a020 }),
-  };
-  const gulls = [];
-  const voices = [];
+export function createGulls({ scene, world, ocean, listener, onPickup = () => {}, onMiss = () => {} }) {
+  const course = world.course, { SAMPLES, pts, tans, rights, lineLat, step, length } = course;
+  const wrapI = (i) => ((i % SAMPLES) + SAMPLES) % SAMPLES;
+  const idxAt = (dist) => wrapI(Math.round(dist / step));
 
-  // Bills: one instanced mesh.
-  const billGeo = new THREE.PlaneGeometry(0.25, 0.107, 8, 1);
-  {
-    const p = billGeo.attributes.position;
-    for (let i = 0; i < p.count; i++) p.setZ(i, 0.014 * Math.sin((p.getX(i) / 0.25) * Math.PI));
-    billGeo.computeVertexNormals();
-  }
-  const billMesh = new THREE.InstancedMesh(billGeo, new THREE.MeshLambertMaterial({ map: makeBillTexture(), side: THREE.DoubleSide }), MAX_BILLS);
-  billMesh.frustumCulled = false;
-  billMesh.count = 0;
-  scene.add(billMesh);
+  // ---------- the bills ----------
+  // Runs of bills along the racing line, with gaps between runs.
   const bills = [];
-
-  // "+$100" pop-ups.
-  const pops = [];
-  const popTex = new Map();
-  const popTexture = (value) => {
-    if (popTex.has(value)) return popTex.get(value);
-    const cv = document.createElement('canvas'); cv.width = 256; cv.height = 96;
-    const g = cv.getContext('2d');
-    const text = '+$' + value.toLocaleString('en-US');
-    g.font = `800 ${text.length > 5 ? 54 : 64}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.lineWidth = 8; g.strokeStyle = '#1d3a26'; g.strokeText(text, 128, 50);
-    g.fillStyle = value > 100 ? '#ffd23f' : '#9cff9c'; g.fillText(text, 128, 50);
-    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
-    popTex.set(value, tex);
-    return tex;
-  };
+  const rampDist = world.ramps.map((r) => r.idx * step);
   {
-    const tex = popTexture(100);
-    for (let i = 0; i < 4; i++) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, fog: false }));
-      s.scale.set(0.24, 0.09, 1);
-      s.renderOrder = 30;
-      s.visible = false;
-      scene.add(s);
-      pops.push({ s, age: 9 });
-    }
-  }
-  let popNext = 0;
-
-  const state = { caught: 0, onCatch: null, value: 100, money: 0, cool: 0 };
-  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3(1, 1, 1), _v = new THREE.Vector3();
-
-  function ensureGulls(n, player) {
-    while (gulls.length < n) {
-      const g = makeGull(mats);
-      const i = gulls.length;
-      // Enter from far ahead and high up.
-      g.position.set(player.x - Math.sin(player.yaw) * 120 + (Math.random() - 0.5) * 60, 30, player.z - Math.cos(player.yaw) * 120);
-      scene.add(g);
-      gulls.push({
-        obj: g, vel: new THREE.Vector3(), phase: Math.random() * 10,
-        ahead: 35 + Math.random() * 35, side: (Math.random() - 0.5) * 22, height: 8 + Math.random() * 5,
-        nextDrop: 2.5 + Math.random() * 4 + i * 0.8, callAt: 2 + Math.random() * 6, carrying: false,
+    let run = 0;
+    for (let d = 34; d < length - 26; d += 11) {
+      const nearRamp = rampDist.some((r) => d > r - 9 && d < r + 30);
+      run++;
+      if (nearRamp || run % 9 >= 7) continue;
+      const i = idxAt(d);
+      bills.push({
+        d, idx: i, x: pts[i].x + rights[i].x * lineLat[i], z: pts[i].z + rights[i].z * lineLat[i], h: 1.15,
+        yaw: Math.atan2(-tans[i].x, -tans[i].z), gold: false, state: 0, t: 0, ph: (d * 0.37) % 6.28, from: new THREE.Vector3(), pos: new THREE.Vector3(),
       });
-      if (voices.length < 2) {
-        const v = new GullVoice(listener, g);
-        v.audio.setRefDistance(7);
-        voices.push(v);
-      }
     }
+    // Golden bills: up where a good jump carries you.
+    for (const r of world.ramps) {
+      const d = r.idx * step + 12, i = idxAt(d);
+      bills.push({ d, idx: i, x: pts[i].x, z: pts[i].z, h: 3.7, yaw: Math.atan2(-tans[i].x, -tans[i].z), gold: true, state: 0, t: 0, ph: d % 6.28, from: new THREE.Vector3(), pos: new THREE.Vector3() });
+    }
+    bills.sort((a, b) => a.d - b.d);
   }
+  const total = bills.length;
 
-  function dropBill(gull, player, t) {
-    if (bills.length >= MAX_BILLS) return;
-    const p = gull.obj.position;
-    const catchY = player.y + 1.1;
-    const T = Math.max(1.2, (p.y - catchY) / FALL_SPEED);
-    // Aim at the left of the seat where the player will be after T.
-    const side = player.side || -1;
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), lx = Math.cos(player.yaw) * side, lz = -Math.sin(player.yaw) * side;
-    const travel = Math.max(0, player.fwdSpeed) * T;
-    const target = new THREE.Vector3(player.x + fx * travel + lx * 0.5, catchY, player.z + fz * travel + lz * 0.5);
-    bills.push({
-      start: p.clone().add(new THREE.Vector3(0, -0.15, 0)), target, T, age: 0, state: 'fall',
-      spin: (Math.random() - 0.5) * 6, wob: Math.random() * 10, pos: p.clone(), rot: new THREE.Euler(), floatAge: 0,
+  const billGeo = assets.billMesh.geometry;
+  const k = BILL_W / 773.66;
+  // The mesh as the opening places it: scaled, centred on its twist.
+  const billBase = new THREE.Matrix4().compose(new THREE.Vector3(0, 0, -8.54 * k), assets.billMesh.quaternion.clone(), new THREE.Vector3(k, k, k));
+  const billTex = makeBillTexture();
+  const MAXI = 40;
+  const billMesh = new THREE.InstancedMesh(billGeo, new THREE.MeshBasicMaterial({ map: billTex, side: THREE.DoubleSide, toneMapped: false }), MAXI);
+  const goldMesh = new THREE.InstancedMesh(billGeo, new THREE.MeshBasicMaterial({ map: billTex, color: 0xffd23f, side: THREE.DoubleSide, toneMapped: false }), 6);
+  for (const m of [billMesh, goldMesh]) { m.frustumCulled = false; m.count = 0; scene.add(m); }
+  // A soft glow behind each bill so the trail reads from far away.
+  const glowTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d'), grad = g.createRadialGradient(32, 32, 2, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.35, 'rgba(255,235,150,.55)'); grad.addColorStop(1, 'rgba(255,210,63,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  })();
+  const glowGeo = new THREE.BufferGeometry();
+  const glowPos = new Float32Array((MAXI + 6) * 3), glowSize = new Float32Array(MAXI + 6);
+  glowGeo.setAttribute('position', new THREE.BufferAttribute(glowPos, 3).setUsage(THREE.DynamicDrawUsage));
+  glowGeo.setAttribute('size', new THREE.BufferAttribute(glowSize, 1).setUsage(THREE.DynamicDrawUsage));
+  const glow = new THREE.Points(glowGeo, new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { map: { value: glowTex } },
+    vertexShader: 'attribute float size; void main() { vec4 mv = viewMatrix * vec4(position, 1.0); gl_PointSize = min(70.0, 420.0 * size / max(0.5, -mv.z)); gl_Position = projectionMatrix * mv; }',
+    fragmentShader: 'uniform sampler2D map; void main() { gl_FragColor = texture2D(map, gl_PointCoord) * vec4(1.0, 0.86, 0.45, 0.42); }',
+  }));
+  glow.frustumCulled = false;
+  scene.add(glow);
+
+  // ---------- the flock ----------
+  const flock = [];
+  for (let i = 0; i < FLOCK; i++) {
+    const model = cloneSkinned(assets.gull.scene);
+    model.scale.setScalar(2.1);
+    model.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+    const holder = new THREE.Group();
+    holder.add(model);
+    scene.add(holder);
+    const mixer = new THREE.AnimationMixer(model);
+    const fly = mixer.clipAction(THREE.AnimationClip.findByName(assets.gull.animations, 'fly'));
+    const glide = mixer.clipAction(THREE.AnimationClip.findByName(assets.gull.animations, 'glide'));
+    fly.play(); glide.play();
+    fly.timeScale = 0.85 + (i % 3) * 0.08;
+    mixer.setTime(i * 0.13);
+    flock.push({
+      holder, model, mixer, fly, glide, flap: 1, mood: i * 1.7, dip: 0,
+      off: { along: -i * 6 + (i % 2) * 3, lat: (i - (FLOCK - 1) / 2) * 3.2, up: 9 + (i * 1.9) % 4 },
+      pos: new THREE.Vector3(), vel: new THREE.Vector3(), voice: null,
     });
-    if (voices.length && Math.random() < 0.5) voices[Math.floor(Math.random() * voices.length)].call(Math.floor(Math.random() * 2));
+  }
+  // Two of them have a voice (calls and wing beats carry over the water).
+  for (const gI of [0, 3]) {
+    try {
+      const v = new GullVoice(listener, flock[gI].holder);
+      v.audio.setRefDistance(16); v.audio.setRolloffFactor(1);
+      flock[gI].voice = v;
+    } catch { /* no audio */ }
   }
 
-  function update(dt, t, player, catchers, active) {
-    state.cool -= dt;
-    const want = active ? Math.min(8, 2 + Math.floor(state.caught / 3)) : 2;
-    ensureGulls(want, player);
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    // The free hand's side of the seat (-1 left, +1 right).
-    const side = player.side || -1;
-    const lx = rx * side, lz = rz * side;
+  const state = { money: 0, combo: 0, best: 0, taken: 0, total, lead: 0, first: 0 };
+  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _t = new THREE.Vector3(), _look = new THREE.Vector3();
+  const archDist = world.arches.map((a) => a.idx * step);
 
-    // The gull due to drop next flies to where its bill will meet the player.
-    let dropper = null;
-    for (const g of gulls) if (!dropper || g.nextDrop < dropper.nextDrop) dropper = g;
-    const fallT = 11 / FALL_SPEED;
+  function hoverPos(b, t, out) {
+    return out.set(b.x, ocean.heightAt(b.x, b.z, t) * 0.5 + b.h + Math.sin(t * 2.1 + b.ph) * 0.07, b.z);
+  }
 
-    for (const g of gulls) {
-      g.nextDrop -= dt;
-      const isDropper = g === dropper && active;
-      const ahead = isDropper ? THREE.MathUtils.clamp(Math.max(0, player.fwdSpeed) * fallT, 12, 90) : g.ahead + Math.sin(t * 0.2 + g.phase) * 8;
-      const gside = isDropper ? 1.5 * side : g.side + Math.sin(t * 0.33 + g.phase) * 5;
-      const height = isDropper ? 11.5 + player.y : g.height + Math.sin(t * 0.5 + g.phase) * 1.5;
-      _v.set(player.x + fx * ahead + rx * gside, height, player.z + fz * ahead + rz * gside);
-      const o = g.obj;
-      // Steer toward the slot with a cruise speed above the player's.
-      const desired = _v.sub(o.position);
-      const dist = desired.length();
-      const maxV = Math.max(10, Math.abs(player.fwdSpeed) + 9);
-      desired.multiplyScalar(Math.min(maxV, dist * 2.5) / Math.max(0.001, dist));
-      g.vel.lerp(desired, Math.min(1, dt * 1.6));
-      o.position.addScaledVector(g.vel, dt);
-      // Face along the flight, banking into turns.
+  function reset(t = 0) {
+    Object.assign(state, { money: 0, combo: 0, best: 0, taken: 0, lead: 20, first: 0 });
+    for (const b of bills) { b.state = 0; b.t = 0; }
+    // The first stretch is already laid out when you sit down.
+    for (const b of bills) if (b.d < 95) b.state = 2;
+    flock.forEach((g, i) => {
+      const p = target(g, state.lead, t, _p);
+      g.pos.copy(p); g.vel.set(0, 0, 0);
+      g.holder.position.copy(p);
+    });
+  }
+
+  // Where a gull wants to be: its place in the formation around the lead point.
+  function target(g, lead, t, out) {
+    const d = lead + g.off.along, i = idxAt(d);
+    let up = g.off.up + Math.sin(t * 0.7 + g.mood) * 1.2;
+    for (const a of archDist) if (Math.abs(d - a) < 26) up = Math.min(up, 6.2);
+    const lat = lineLat[i] + g.off.lat * (course.walled[i] ? 0.45 : 1) + Math.sin(t * 0.45 + g.mood * 2) * 1.5;
+    return out.set(pts[i].x + rights[i].x * lat, up - g.dip, pts[i].z + rights[i].z * lat);
+  }
+
+  // dist: the player's distance along the lap in metres; active: racing.
+  function update(dt, t, player, dist, active, hands = []) {
+    // The flock keeps its lead, and never comes back.
+    const want = Math.min(length + 30, dist + LEAD);
+    if (active) state.lead = Math.max(state.lead, Math.min(want, state.lead + Math.max(34, player.speed * 1.5) * dt));
+    const circling = !active || state.lead >= length + 29;
+
+    for (const g of flock) {
+      target(g, state.lead, t, _t);
+      if (circling) {
+        // Wheel around over the same spot.
+        const a = t * 0.5 + g.mood, r = 9 + (g.mood % 3) * 2.5;
+        _t.x += Math.cos(a) * r; _t.z += Math.sin(a) * r; _t.y += 2;
+      }
+      // Spring toward the target, so they bank and swoop rather than slide.
+      g.vel.x += ((_t.x - g.pos.x) * 3.2 - g.vel.x * 3.0) * dt;
+      g.vel.y += ((_t.y - g.pos.y) * 4.0 - g.vel.y * 3.4) * dt;
+      g.vel.z += ((_t.z - g.pos.z) * 3.2 - g.vel.z * 3.0) * dt;
+      g.pos.addScaledVector(g.vel, dt);
+      g.dip = Math.max(0, g.dip - dt * 3);
+      g.holder.position.copy(g.pos);
       const sp = Math.hypot(g.vel.x, g.vel.z);
       if (sp > 0.5) {
-        const yaw = Math.atan2(-g.vel.x, -g.vel.z);
-        let dy = yaw - o.rotation.y; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-        o.rotation.set(THREE.MathUtils.clamp(g.vel.y * 0.05, -0.4, 0.4), o.rotation.y + dy * Math.min(1, dt * 3), -dy * 0.8, 'YXZ');
+        _look.set(g.pos.x + g.vel.x, g.pos.y + g.vel.y * 0.5, g.pos.z + g.vel.z);
+        g.holder.lookAt(_look);
       }
-      // Flap when climbing or catching up, glide otherwise.
-      const effort = THREE.MathUtils.clamp(0.25 + g.vel.y * 0.15 + (dist > 15 ? 0.5 : 0), 0, 1);
-      g.phase += dt * (6 + 4 * effort);
-      for (const w of o.userData.wings) {
-        const a = Math.sin(g.phase) * 0.7 * effort + 0.12;
-        w.pivot.rotation.z = w.s * a;
-        w.outer.rotation.z = w.s * a * 0.7;
-      }
-      g.callAt -= dt;
-      if (g.callAt < 0) { g.callAt = 4 + Math.random() * 7; const v = voices.find((vv) => vv.audio.parent === o); if (v) v.call(Math.floor(Math.random() * 2)); }
-      if (active && isDropper && g.nextDrop <= 0 && state.cool <= 0) {
-        const rel = (o.position.x - player.x) * fx + (o.position.z - player.z) * fz;
-        if (rel > 8 && rel < ahead + 20) {
-          dropBill(g, player, t);
-          // One bill at a time across the flock, more often as the flock grows.
-          state.cool = Math.max(1.3, 4 - state.caught * 0.06) * (0.7 + Math.random() * 0.6) / (1 + (gulls.length - 2) * 0.15);
-          g.nextDrop = state.cool * 2 + Math.random() * 2;
+      // Flap to climb and to keep up, glide in between.
+      const wantFlap = g.vel.y > 0.4 || sp < 9 || Math.sin(t * 0.8 + g.mood * 1.3) > 0.1 ? 1 : 0.12;
+      g.flap += (wantFlap - g.flap) * Math.min(1, dt * 3);
+      g.fly.setEffectiveWeight(g.flap); g.glide.setEffectiveWeight(1 - g.flap);
+      g.mixer.update(dt);
+      if (g.voice && Math.random() < dt * 0.22) g.voice.call(Math.random() < 0.5 ? 0 : 1);
+    }
+
+    // Drop the bills the flock passes over.
+    for (let n = state.first; n < bills.length; n++) {
+      const b = bills[n];
+      if (b.d > state.lead + 4) break;
+      if (b.state !== 0) continue;
+      let best = flock[0], bd = Infinity;
+      for (const g of flock) { const d = (g.pos.x - b.x) ** 2 + (g.pos.z - b.z) ** 2; if (d < bd) { bd = d; best = g; } }
+      b.state = 1; b.t = 0; b.from.copy(best.pos).y -= 0.4;
+      best.dip = 1.2;
+      if (best.voice && Math.random() < 0.5) best.voice.call(1);
+    }
+
+    // Move, draw and collect the bills near the player.
+    let nb = 0, ng = 0, np = 0;
+    while (state.first < bills.length && bills[state.first].d < dist - 14 && bills[state.first].state >= 3) state.first++;
+    for (let n = state.first; n < bills.length; n++) {
+      const b = bills[n];
+      if (b.d > dist + 190) break;
+      if (b.state === 0) continue;
+      b.t += dt;
+      let scale = b.gold ? 1.7 : 1, spin = 0, tilt = Math.sin(t * 1.3 + b.ph) * 0.16;
+      if (b.state === 1) {
+        // Flutter down from the gull: swing side to side, tumbling, then settle.
+        const kf = Math.min(1, b.t / 1.5), e = kf * kf * (3 - 2 * kf);
+        hoverPos(b, t, _p);
+        b.pos.lerpVectors(b.from, _p, e);
+        const sway = Math.sin(b.t * 6 + b.ph) * (1 - e) * 1.2;
+        b.pos.x += Math.cos(b.yaw) * sway; b.pos.z -= Math.sin(b.yaw) * sway;
+        spin = (1 - e) * (b.t * 7); tilt += (1 - e) * Math.sin(b.t * 9) * 0.9;
+        if (kf >= 1) b.state = 2;
+      } else if (b.state === 2) {
+        hoverPos(b, t, b.pos);
+        spin = Math.sin(t * 0.9 + b.ph) * 0.5;
+        const dx = player.x - b.x, dz = player.z - b.z;
+        let got = dx * dx + dz * dz < PICK * PICK && Math.abs(b.pos.y - (player.y + 1.1)) < (b.gold ? 2.2 : 1.9);
+        // A free hand can snatch a bill too.
+        if (!got) for (const h of hands) if (h.distanceToSquared(b.pos) < 0.3) { got = true; break; }
+        if (got && active) {
+          b.state = 3; b.t = 0; b.from.copy(b.pos);
+          state.taken++;
+          state.combo = Math.min(MAX_COMBO, state.combo + 1);
+          state.best = Math.max(state.best, state.combo);
+          const value = b.gold ? GOLD_VALUE : 100 * state.combo;
+          state.money += value;
+          onPickup(b, value);
+        } else if (active && dist > b.d + 8) {
+          b.state = 4; b.t = 0;
+          if (!b.gold) { state.combo = Math.max(0, state.combo - 2); onMiss(b); }
         }
       }
-    }
-
-    // Bills.
-    for (let i = bills.length - 1; i >= 0; i--) {
-      const b = bills[i];
-      b.age += dt;
-      if (b.state === 'fall') {
-        const s = Math.min(1, b.age / b.T);
-        // Keep aiming at where the player's left hand will be when it arrives.
-        const rem = Math.max(0, b.T - b.age);
-        b.target.set(player.x + (player.vx || 0) * rem + lx * 0.5, player.y + 1.1, player.z + (player.vz || 0) * rem + lz * 0.5);
-        const e = s * s * (3 - 2 * s);
-        b.pos.lerpVectors(b.start, b.target, e);
-        b.pos.y = b.start.y + (b.target.y - b.start.y) * s;
-        b.pos.x += Math.sin(b.age * 2.3 + b.wob) * 0.25 * (1 - s * 0.7);
-        b.pos.z += Math.cos(b.age * 1.7 + b.wob) * 0.2 * (1 - s * 0.7);
-        b.rot.set(Math.sin(b.age * 3 + b.wob) * 0.9, b.age * b.spin, Math.sin(b.age * 2.2) * 0.6);
-        // Catch?
-        let caught = false;
-        for (const c of catchers) if (c && b.pos.distanceTo(c.pos) < (c.radius || CATCH_RADIUS)) { caught = true; break; }
-        if (caught) {
-          bills.splice(i, 1);
-          state.caught++;
-          state.money += state.value;
-          sfx.cash();
-          const pop = pops[popNext++ % pops.length];
-          pop.s.material.map = popTexture(state.value);
-          pop.s.position.copy(b.pos); pop.age = 0; pop.s.visible = true;
-          state.onCatch && state.onCatch(state.caught);
-          continue;
-        }
-        const water = ocean.heightAt(b.pos.x, b.pos.z, t);
-        if (b.pos.y <= water + 0.02 || s >= 1 && b.age > b.T + 2.5) b.state = 'float';
-        if (s >= 1) b.pos.y -= (b.age - b.T) * FALL_SPEED * dt * 4;
-      } else {
-        b.floatAge += dt;
-        b.pos.y = ocean.heightAt(b.pos.x, b.pos.z, t) + 0.02 - Math.max(0, b.floatAge - 2.5) * 0.3;
-        b.rot.set(-Math.PI / 2, b.rot.y, 0);
-        if (b.floatAge > 4) { bills.splice(i, 1); continue; }
+      if (b.state === 3) {
+        // Taken: it flies to the rider's chest, spinning, and is gone.
+        const kf = b.t / 0.2;
+        if (kf >= 1) continue;
+        _p.set(player.x - Math.sin(player.yaw) * 0.5, player.y + 1.15, player.z - Math.cos(player.yaw) * 0.5);
+        b.pos.lerpVectors(b.from, _p, kf);
+        scale *= 1 - 0.75 * kf; spin = b.t * 30;
+      } else if (b.state === 4) {
+        const kf = b.t / 0.8;
+        if (kf >= 1) continue;
+        hoverPos(b, t, b.pos); b.pos.y += kf * 1.5; scale *= 1 - kf;
       }
+      _q.setFromEuler(_e.set(tilt * 0.6, b.yaw + Math.PI + spin, tilt, 'YXZ'));
+      _m.compose(b.pos, _q, _s.setScalar(scale)).multiply(billBase);
+      if (b.gold) { if (ng < 6) goldMesh.setMatrixAt(ng++, _m); }
+      else if (nb < MAXI) billMesh.setMatrixAt(nb++, _m);
+      if (np < MAXI + 6 && b.state <= 2) { glowPos[np * 3] = b.pos.x; glowPos[np * 3 + 1] = b.pos.y; glowPos[np * 3 + 2] = b.pos.z; glowSize[np] = b.gold ? 2.6 : 1.5; np++; }
     }
-    billMesh.count = bills.length;
-    for (let i = 0; i < bills.length; i++) {
-      const b = bills[i];
-      _m.compose(b.pos, _q.setFromEuler(b.rot), _s);
-      billMesh.setMatrixAt(i, _m);
-    }
-    billMesh.instanceMatrix.needsUpdate = true;
-
-    for (const p of pops) {
-      if (!p.s.visible) continue;
-      p.age += dt;
-      p.s.position.y += dt * 0.35;
-      p.s.material.opacity = Math.max(0, 1 - p.age / 1.1);
-      if (p.age > 1.1) p.s.visible = false;
-    }
+    billMesh.count = nb; goldMesh.count = ng;
+    billMesh.instanceMatrix.needsUpdate = true; goldMesh.instanceMatrix.needsUpdate = true;
+    glowGeo.setDrawRange(0, np);
+    glowGeo.attributes.position.needsUpdate = true; glowGeo.attributes.size.needsUpdate = true;
   }
 
-  function reset() {
-    state.caught = 0;
-    state.money = 0;
-    bills.length = 0;
-    billMesh.count = 0;
-  }
+  // A wall hit shakes some of the combo out.
+  function knock() { state.combo = Math.floor(state.combo / 2); }
 
-  return { update, reset, state, gulls, bills };
+  return { state, bills, flock, reset, update, knock, setVolume(v) { for (const g of flock) if (g.voice) g.voice.setLevel(v, 0.3); } };
 }
