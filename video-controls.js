@@ -71,8 +71,9 @@ function drawPlate(g, w, h, st = {}) {
   g.strokeStyle = 'rgba(242, 196, 90, 0.55)';
   g.lineWidth = 4;
   g.beginPath(); g.roundRect(3, 3, w - 6, h - 6, 56); g.fill(); g.stroke();
-  // Progress bar and time along the top.
-  const y = h / 2 - BAR_Y * px, x0 = w / 2 - 0.16 * px, x1 = w / 2 + 0.07 * px;
+  // Progress bar and time along the top, with the playing source's tag
+  // ("8K", "4K") between them when there is one.
+  const y = h / 2 - BAR_Y * px, x0 = w / 2 - 0.16 * px, x1 = w / 2 + (st.label ? 0.036 : 0.07) * px;
   const k = st.duration ? Math.min(1, Math.max(0, st.time / st.duration)) : 0;
   g.lineCap = 'round'; g.lineWidth = 10;
   g.strokeStyle = 'rgba(255, 255, 255, 0.22)';
@@ -81,7 +82,14 @@ function drawPlate(g, w, h, st = {}) {
   g.beginPath(); g.moveTo(x0, y); g.lineTo(x0 + (x1 - x0) * Math.max(0.001, k), y); g.stroke();
   g.fillStyle = 'rgba(255, 255, 255, 0.85)';
   g.font = '600 34px system-ui, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-  g.fillText(`${fmt(st.time)} / ${fmt(st.duration)}`, x1 + 0.014 * px, y + 1);
+  g.fillText(`${fmt(st.time)} / ${fmt(st.duration)}`, w / 2 + 0.084 * px, y + 1);
+  if (st.label) {
+    const cx = w / 2 + 0.0605 * px, tw = 0.026 * px, th = 40;
+    g.lineWidth = 3; g.strokeStyle = GOLD; g.fillStyle = GOLD;
+    g.beginPath(); g.roundRect(cx - tw / 2, y - th / 2, tw, th, 10); g.stroke();
+    g.font = '700 27px system-ui, sans-serif'; g.textAlign = 'center';
+    g.fillText(String(st.label).slice(0, 3), cx, y + 2);
+  }
   // Labels under the buttons.
   g.font = '600 32px system-ui, sans-serif'; g.textAlign = 'center';
   const labels = ['Back 10 s', st.paused ? 'Play' : 'Pause', 'Close'];
@@ -135,7 +143,7 @@ export class VideoControls {
     });
 
     this.click = this.makeClick();
-    this.state = { hover: -1, paused: false, time: 0, duration: 0, drawn: '' };
+    this.state = { hover: -1, paused: false, time: 0, duration: 0, label: '', drawn: '' };
     this.opacity = 0;
     this.cooldownUntil = 0;
     this.lastTips = new Map();
@@ -227,7 +235,7 @@ export class VideoControls {
 
   // fingertips: world positions of index fingertips. rayHits: results of
   // hitRay for the pointing controllers this frame. head: the camera.
-  update(t, dt, { fingertips = [], rayHits = [], head, paused = false, time = 0, duration = 0 }) {
+  update(t, dt, { fingertips = [], rayHits = [], head, paused = false, time = 0, duration = 0, label = '' }) {
     this.now = t;
     if (!this.root.visible) return;
     let hover = -1, engaged = paused;
@@ -274,8 +282,8 @@ export class VideoControls {
     });
 
     // Redraw the plate only when what it shows changes.
-    this.state.paused = paused; this.state.time = time; this.state.duration = duration;
-    const key = `${hover}|${paused}|${Math.floor(time)}|${Math.floor(duration)}`;
+    this.state.paused = paused; this.state.time = time; this.state.duration = duration; this.state.label = label;
+    const key = `${hover}|${paused}|${Math.floor(time)}|${Math.floor(duration)}|${label}`;
     if (key !== this.state.drawn) {
       this.state.drawn = key;
       this.plateTex.userData.redraw(this.state);

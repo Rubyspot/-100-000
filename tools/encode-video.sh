@@ -30,7 +30,7 @@ lines = open(f"{out}/index.m3u8").read().splitlines()
 segs = [l for l in lines if l.endswith(".m4s")]
 dur = sum(float(re.match(r"#EXTINF:([\d.]+)", l).group(1)) for l in lines if l.startswith("#EXTINF"))
 codecs = "avc1.640034" + (",mp4a.40.2" if has_audio else "")
-json.dump({"mime": f'video/mp4; codecs="{codecs}"', "init": "init.mp4", "segments": segs, "duration": dur},
+json.dump({"label": "4K", "mime": f'video/mp4; codecs="{codecs}"', "init": "init.mp4", "segments": segs, "duration": dur},
           open(f"{out}/manifest.json", "w"), indent=1)
 print(f"{len(segs)} segments, {dur:.1f} s")
 PY
