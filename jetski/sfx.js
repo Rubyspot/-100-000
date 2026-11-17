@@ -322,11 +322,14 @@ export class Sfx {
   }
   gate() { if (this.ctx.state === 'running') { this.tone(783.99, 0, 0.3, 'triangle', 0.07); this.tone(1174.66, 0.06, 0.4, 'sine', 0.06); } }
   // A bill: a bright pluck that climbs a pentatonic scale with the combo,
-  // with a crisp little crackle on top. Gold rings out longer.
+  // with a crisp little crackle on top. At the top of the combo the notes
+  // roll through a little tune instead of repeating. Gold rings out longer.
   pickup(combo, gold = false) {
     if (this.ctx.state !== 'running') return;
     const scale = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
-    const f = 523.25 * Math.pow(2, scale[Math.max(0, Math.min(scale.length - 1, combo - 1))] / 12);
+    let step = Math.max(0, Math.min(scale.length - 1, combo - 1));
+    if (combo >= 10 && !gold) { this.pickN = (this.pickN || 0) + 1; step = [9, 10, 8, 10, 9, 7, 8, 10][this.pickN % 8]; }
+    const f = 523.25 * Math.pow(2, scale[step] / 12);
     this.tone(f, 0, gold ? 0.9 : 0.32, 'triangle', 0.13);
     this.tone(f * 2, 0.02, gold ? 0.7 : 0.2, 'sine', 0.06);
     if (gold) { this.tone(f * 1.5, 0.09, 0.8, 'triangle', 0.09); this.tone(f * 2, 0.18, 0.9, 'sine', 0.08); }

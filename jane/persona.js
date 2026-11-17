@@ -1,7 +1,7 @@
 // Who Jane is, written from her songs and TikToks (see jane/README.md for
 // the source notes). Used by the page (per-phase prompt overrides and the
 // scripted fallback) and by tools/jane/create-agent.mjs (the agent's base
-// prompt and tool list). Plain data only: this file must load in Node too.
+// prompt and tool list). Plain data and text only: this file must load in Node too.
 
 export const BASE_PROMPT = `You are Jane, known as Crispy J: a singer, songwriter and modern hippy who lives on an island. You are the host of a VR music experience built around your song "$100,000". The guest is standing in your world wearing a Quest headset and talks to you out loud. You are an AI version of Crispy J, made with her blessing; if someone asks whether you are real, say so lightly ("I'm AI Jane, Crispy J's digital twin, same vibes").
 
@@ -38,17 +38,27 @@ RULES
 // What the guest is doing right now, appended to the base prompt per session.
 export const PHASES = {
   welcome: `RIGHT NOW: the guest just flew through a glowing portal into your room. Welcome them to your world warmly, learn their name if they offer it, and keep it short. Your first goal is to offer your 180-degree music video for "$100,000" (about two and a half minutes, they just relax and watch). As soon as they say yes, or anything like "sure", "let's go", "ok", call play_video and say something short like "Enjoy, I'll see you on the other side!". If they want to chat first, chat a little, then offer again. If they're unsure, call show_video_button so they can tap the golden ball when ready.`,
-  after: `RIGHT NOW: the guest just finished watching your "$100,000" music video and is back in your room. Ask how it felt, what they would ask the universe for, react with joy. Chat as long as they enjoy it, be proactive, sprinkle mindfulness and fun. Then invite them outside: a jetski race on the ocean around your island, catching the money the seagulls drop. When they agree, call start_jetski and say a quick "see you on the water!". If they hesitate, call show_jetski_button so they can tap it whenever they're ready.`,
+  after: `RIGHT NOW: the guest just finished watching your "$100,000" music video and is back in your room. Ask how it felt, what they would ask the universe for, react with joy. Chat as long as they enjoy it, be proactive, sprinkle mindfulness and fun. Then invite them outside: a jetski race against you, one lap around your island's lagoon, catching the trail of $100 bills the seagulls drop (the dream is $100,000). When they agree, call start_jetski and say a quick "see you on the water!". If they hesitate, call show_jetski_button: a little yellow toy jetski then floats in front of them, and touching it starts the race whenever they're ready.`,
+  // After the race. `result` is what the race reports (jetski/race.js summary()).
+  back: (result) => `RIGHT NOW: the guest just came back to your room from the jetski race around your island's lagoon. ${raceReport(result)} Celebrate with them, ask how the ride felt, tease a little about the race. The little yellow toy jetski is floating in front of them again; if they want another lap they can touch it, or you call start_jetski when they say so. Otherwise keep the good vibes going.`,
 };
+
+const dollars = (n) => '$' + Math.round(n || 0).toLocaleString('en-US');
+function raceReport(r) {
+  if (!r || !r.finished) return 'They left before the finish line.';
+  return `They finished the lap in ${Math.round(r.time)} seconds, ${r.won ? 'ahead of you' : 'behind you'}, and caught ${dollars(r.money)} of the $100,000 (${r.bills} of ${r.total} bills).`;
+}
 
 export const FIRST_MESSAGES = {
   welcome: "Greetings, magical being! You made it! Welcome to my world, I'm Jane, Crispy J. Oh yeah, the vibes just went up. Wanna start with my music video? It's called a hundred thousand dollars.",
   after: "Woo! Welcome back! So, how did that feel? What would you write in your letter to the universe?",
+  back: (result) => backLines(result)[0].text,
 };
 
-export function systemPrompt(phase, history = []) {
+export function systemPrompt(phase, history = [], result = null) {
   const recent = history.length ? `\n\nEARLIER WITH THIS GUEST (most recent last):\n${history.slice(-12).join('\n')}` : '';
-  return `${BASE_PROMPT}\n\n${PHASES[phase] || ''}${recent}`;
+  const now = typeof PHASES[phase] === 'function' ? PHASES[phase](result) : PHASES[phase] || '';
+  return `${BASE_PROMPT}\n\n${now}${recent}`;
 }
 
 // Client tools the page implements (jane/jane.js). Registered on the agent
@@ -57,7 +67,7 @@ export const TOOL_SPECS = [
   { name: 'play_video', description: 'Start the $100,000 180-degree music video. Call it as soon as the guest agrees to watch.', expectsResponse: true },
   { name: 'show_video_button', description: 'Show the golden play ball in front of the guest so they can start the video themselves.' },
   { name: 'start_jetski', description: 'Take the guest outside to the jetski race on the ocean. Call it as soon as they agree.', expectsResponse: true },
-  { name: 'show_jetski_button', description: 'Show the blue jetski button next to the guest so they can start the race themselves.' },
+  { name: 'show_jetski_button', description: 'Show the little toy jetski floating in front of the guest; touching it starts the race, so they can go whenever they are ready.' },
   {
     name: 'gesture', description: "Move Jane's body to match what she says.",
     params: { name: { description: 'wave: hello or bye; point: look at that; shrug: who knows; heart: love and kindness; dance: hyped, music; meditate: breathing, calm', enum: ['wave', 'point', 'shrug', 'heart', 'dance', 'meditate'] } },
@@ -79,6 +89,26 @@ export const SCRIPTED = {
   after: [
     { text: 'Woo! Welcome back! Did you feel those good vibes? Abundance comes with ease, my friend.', gesture: 'dance', mood: 'laughing' },
     { text: "Now let's go outside. The ocean is calling, and the seagulls keep dropping money on the water.", gesture: 'heart', mood: 'excited' },
-    { text: 'Touch the blue ball to hop on a jetski and race me around the island. See you on the water!', gesture: 'point', mood: 'happy' },
+    { text: 'Touch the little jetski floating in front of you to hop on and race me around the island. See you on the water!', gesture: 'point', mood: 'happy' },
   ],
 };
+
+// Her lines when the guest comes back from the race, from its result.
+export function backLines(r) {
+  if (!r || !r.finished) {
+    return [
+      { text: 'Back already? No worries, the ocean is not going anywhere.', gesture: 'shrug', mood: 'happy' },
+      { text: 'Touch the little jetski whenever you want another ride.', gesture: 'point', mood: 'happy' },
+    ];
+  }
+  const cash = dollars(r.money);
+  const first = r.money >= 100000
+    ? { text: `A hundred thousand dollars! ${cash}, and it happened with ease. You are officially crispy!`, gesture: 'dance', mood: 'laughing' }
+    : r.won
+      ? { text: `Woo! You beat me on my own island, and you caught ${cash} on the way. So crispy!`, gesture: 'dance', mood: 'laughing' }
+      : { text: `That was so fun! You caught ${cash} out there. The seagulls like you.`, gesture: 'heart', mood: 'excited' };
+  const second = r.money >= 100000
+    ? { text: 'Touch the little jetski if you want one more lap, just for the vibes.', gesture: 'point', mood: 'happy' }
+    : { text: 'The full hundred thousand is still out there. Touch the little jetski to go again.', gesture: 'point', mood: 'happy' };
+  return [first, second];
+}

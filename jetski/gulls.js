@@ -3,9 +3,11 @@
 // mesh, drawn large) that flutter down and hover over the water. The trail
 // of bills is the way round the course: ride through them to pick them up
 // (a bill that is close enough flies into your hands).
-// Every bill in a row is worth $100 more than the last, up to $1,000
-// ("Crispy x10"). Missing a bill or hitting a wall costs some of the combo.
-// A golden bill hangs in the air over each ramp: $2,500 and a boost.
+// Every bill in a row is worth $250 more than the last, up to $2,500
+// ("Crispy x10"). A missed bill takes one step off the combo and a wall hit
+// three. A golden bill hangs in the air over each ramp: $10,000 and a
+// boost. The song's $100,000 is meant to come "with ease": a first lap that
+// takes a bit over half of the bills gets there, a clean one triples it.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
@@ -13,11 +15,16 @@ import { GullVoice } from '../audio.js';
 
 const asset = (path) => new URL(path, import.meta.url).href;
 export const MAX_COMBO = 10;
-const GOLD_VALUE = 2500;
+export const STEP_VALUE = 250;   // each step of the combo adds this to a bill
+export const GOLD_VALUE = 10000;
 const FLOCK = 5;
 const LEAD = 62;          // how far ahead of the player the flock flies, metres
 const BILL_W = 0.95;      // drawn width of a bill, metres
-const PICK = 3.1;         // a bill this close to the jetski flies to the rider, metres
+// A bill this close to the jetski flies to the rider, metres. The reach is
+// longer while the combo is low, so the money comes to a rider who is
+// struggling, and tightens as the combo climbs.
+const PICK = 3.4, PICK_HELP = 1.6;
+const SPACING = 10;       // between bills in a run, metres
 
 function makeBillTexture() {
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 436;
@@ -66,7 +73,7 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
   const rampDist = world.ramps.map((r) => r.idx * step);
   {
     let run = 0;
-    for (let d = 34; d < length - 26; d += 11) {
+    for (let d = 34; d < length - 26; d += SPACING) {
       const nearRamp = rampDist.some((r) => d > r - 9 && d < r + 30);
       run++;
       if (nearRamp || run % 9 >= 7) continue;
@@ -242,7 +249,8 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
         hoverPos(b, t, b.pos);
         spin = Math.sin(t * 0.9 + b.ph) * 0.5;
         const dx = player.x - b.x, dz = player.z - b.z;
-        let got = dx * dx + dz * dz < PICK * PICK && Math.abs(b.pos.y - (player.y + 1.1)) < (b.gold ? 2.2 : 1.9);
+        const reach = PICK + PICK_HELP * (1 - state.combo / MAX_COMBO);
+        let got = dx * dx + dz * dz < reach * reach && Math.abs(b.pos.y - (player.y + 1.1)) < (b.gold ? 2.2 : 1.9);
         // A free hand can snatch a bill too.
         if (!got) for (const h of hands) if (h.distanceToSquared(b.pos) < 0.3) { got = true; break; }
         if (got && active) {
@@ -250,12 +258,12 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
           state.taken++;
           state.combo = Math.min(MAX_COMBO, state.combo + 1);
           state.best = Math.max(state.best, state.combo);
-          const value = b.gold ? GOLD_VALUE : 100 * state.combo;
+          const value = b.gold ? GOLD_VALUE : STEP_VALUE * state.combo;
           state.money += value;
           onPickup(b, value);
         } else if (active && dist > b.d + 8) {
           b.state = 4; b.t = 0;
-          if (!b.gold) { state.combo = Math.max(0, state.combo - 2); onMiss(b); }
+          if (!b.gold) { state.combo = Math.max(0, state.combo - 1); onMiss(b); }
         }
       }
       if (b.state === 3) {
@@ -283,7 +291,7 @@ export function createGulls({ scene, world, ocean, listener, onPickup = () => {}
   }
 
   // A wall hit shakes some of the combo out.
-  function knock() { state.combo = Math.floor(state.combo / 2); }
+  function knock() { state.combo = Math.max(0, state.combo - 3); }
 
   return { state, bills, flock, reset, update, knock, setVolume(v) { for (const g of flock) if (g.voice) g.voice.setLevel(v, 0.3); } };
 }

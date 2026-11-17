@@ -66,16 +66,17 @@ export function createHud({ holder, camera, font, eyeY, embedded = false, goal =
     g.lineWidth = 10; g.strokeStyle = C.pink; g.stroke();
     g.beginPath(); g.roundRect(18, 18, w - 36, h - 36, 34); g.lineWidth = 3; g.strokeStyle = 'rgba(255,210,63,.55)'; g.stroke();
     // Cash and the way to the goal.
-    const rich = i.money >= goal;
+    // Past the goal the bar starts over toward the next hundred thousand.
+    const got = Math.floor(i.money / goal), rich = got >= 1;
     sticker(g, money(i.money), 40, 84, 78, rich ? C.mint : C.yellow, { align: 'left', width: 10, maxWidth: 380 });
-    const k = Math.min(1, i.money / goal);
-    pill(g, 40, 136, 370, 22, 'rgba(255,255,255,.14)');
+    const k = Math.min(1, (i.money - got * goal) / goal);
+    pill(g, 40, 136, 370, 22, rich ? 'rgba(126,240,200,.3)' : 'rgba(255,255,255,.14)');
     if (k > 0.02) {
       const grad = g.createLinearGradient(40, 0, 410, 0); grad.addColorStop(0, C.pink); grad.addColorStop(1, C.yellow);
       pill(g, 40, 136, Math.max(22, 370 * k), 22, grad);
     }
     g.font = F(600, 20); g.textAlign = 'right'; g.textBaseline = 'middle'; g.fillStyle = rich ? C.mint : 'rgba(255,246,224,.75)';
-    g.fillText(rich ? '$100,000!' : 'to $100,000', 408, 172);
+    g.fillText(rich ? `got ${money(got * goal)}!  next ${money((got + 1) * goal)}` : `to ${money(goal)}`, 408, 172);
     // Crispy combo.
     const combo = i.combo || 0, hot = combo >= maxCombo;
     sticker(g, hot ? 'CRISPY MAX' : 'CRISPY', 40, 212, 30, hot ? C.yellow : C.pink, { align: 'left', width: 6 });

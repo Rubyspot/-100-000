@@ -17,11 +17,11 @@
   html, body { height: 100%; margin: 0; background: #0c6f86; color: var(--cream);
     font: 600 16px/1.45 Fredoka, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   canvas { display: block; position: fixed; inset: 0; }
-  #ui { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
+  #ui { position: fixed; inset: 0; display: flex; padding: 16px; overflow-y: auto; }
   #ui[hidden] { display: none; }
   .card { background: rgba(42, 16, 48, .9); border: 5px solid var(--pink); border-radius: 28px;
     box-shadow: 0 0 0 3px var(--plum), 8px 10px 0 var(--yellow);
-    padding: 28px; max-width: 33rem; width: 100%; box-sizing: border-box; }
+    padding: 28px; max-width: 33rem; width: 100%; box-sizing: border-box; margin: auto; }
   h1 { margin: 0 0 4px; font-size: 2.4rem; line-height: 1.05; color: var(--yellow);
     text-shadow: 3px 3px 0 var(--pink); letter-spacing: .01em; }
   .sub { margin: 10px 0 18px; color: var(--cream); }
@@ -60,8 +60,8 @@
       <li>Sit down. The handlebar is in front of your chest.</li>
       <li><b>Make a fist on a grip</b> to go. One hand is enough; open it to coast.</li>
       <li><b>Turn your fist to steer</b>, like a dial or like a handlebar. Two hands work too.</li>
-      <li><b>Follow the bills.</b> Each one in a row is worth $100 more, up to $1,000. Missing one or hitting a rock costs some of the combo.</li>
-      <li>Golden bills hang over the ramps: $2,500 and a boost.</li>
+      <li><b>Follow the bills.</b> Each one in a row is worth $250 more, up to $2,500. Missing one or hitting a rock costs some of the combo.</li>
+      <li>Golden bills hang over the ramps: $10,000 and a boost.</li>
     </ul>
   </div>
 </div>

@@ -9,6 +9,9 @@
 // The steering goes through a One Euro filter (steady when the hand is
 // still, quick when it moves), a small dead zone and a soft curve around the
 // middle. A hand that drops out of tracking for a moment keeps its grip.
+// A hand that is already closed on a grip when the ride begins (it has just
+// touched a button there) takes hold only after it has opened or moved away
+// once, or after a moment, so the ride never starts by accident.
 // Joints are read straight from the XR frame, so this works the same on the
 // race page and inside the main experience's session. Controllers and the
 // keyboard are fallbacks.
@@ -54,7 +57,7 @@ export function createControls({ renderer, holder, rig, options = {} }) {
     dots.frustumCulled = false; dots.count = 0;
     holder.add(dots);
     return {
-      side, index, dots, seen: false, lostFor: 9, closed: false, pinching: false, grabbing: false, grabbedAt: 0, ratio: 2,
+      side, index, dots, seen: false, lostFor: 9, closed: false, pinching: false, grabbing: false, grabbedAt: 0, ratio: 2, armed: false,
       joints: new Float32Array(JOINTS * 3),          // in the holder's space
       palm: new THREE.Vector3(), knuckle: new THREE.Vector3(), tip: new THREE.Vector3(),
       palmWorld: new THREE.Vector3(), tipWorld: new THREE.Vector3(),
@@ -93,13 +96,16 @@ export function createControls({ renderer, holder, rig, options = {} }) {
   function analyse(h) {
     const wrist = joint(h, J.wrist, _a);
     // Curl: fingertip-to-wrist over knuckle-to-wrist. About 1.9 open, near 1 in a fist.
-    let ratio = 0;
+    // A fist has the index finger curled too (a pointing hand is not one).
+    let ratio = 0, index = 2;
     for (const [tip, prox] of [[J.indexTip, J.indexProx], [J.middleTip, J.middleProx], [J.ringTip, J.ringProx]]) {
-      ratio += joint(h, tip, _b).distanceTo(wrist) / Math.max(0.01, joint(h, prox, _v).distanceTo(wrist));
+      const r = joint(h, tip, _b).distanceTo(wrist) / Math.max(0.01, joint(h, prox, _v).distanceTo(wrist));
+      if (tip === J.indexTip) index = r;
+      ratio += r;
     }
     h.ratio = ratio / 3;
     if (h.closed && h.ratio > 1.58) h.closed = false;
-    else if (!h.closed && h.ratio < 1.38) h.closed = true;
+    else if (!h.closed && h.ratio < 1.38 && index < 1.5) h.closed = true;
     const pinch = joint(h, J.thumbTip, _b).distanceTo(joint(h, J.indexTip, _v));
     if (h.pinching && pinch > 0.045) h.pinching = false;
     else if (!h.pinching && pinch < 0.022) h.pinching = true;
@@ -130,7 +136,7 @@ export function createControls({ renderer, holder, rig, options = {} }) {
   }
 
   const euro = new OneEuro(1.6, 1.2);
-  let twoW = 0, two = { yaw: 0, roll: 0 }, keySteer = 0, wasTwo = false;
+  let twoW = 0, two = { yaw: 0, roll: 0 }, keySteer = 0, wasTwo = false, armAllAt = null;
   const ctrlNeutral = new Map();
   const input = {
     throttle: 0, steer: 0, engaged: false, gripL: false, gripR: false, riding: 0, device: 'none',
@@ -151,6 +157,7 @@ export function createControls({ renderer, holder, rig, options = {} }) {
     rig.updateMatrix();
     _rigQ.setFromRotationMatrix(rig.matrix);
 
+    if (armAllAt === null) armAllAt = now + 1.5;
     for (const h of hands) h.seen = false;
     if (session && frame && ref) {
       for (const src of session.inputSources) {
@@ -170,8 +177,9 @@ export function createControls({ renderer, holder, rig, options = {} }) {
         const eff = _a.copy(h.palm).add(layout.fit);
         const d = eff.distanceTo(grip);
         const holding = h.closed || h.pinching;
+        if (!holding || d > 0.3 || now > armAllAt) h.armed = true;
         if (!holding || d > 0.5) h.grabbing = false;
-        else if (!h.grabbing && d < O.grabRadius) {
+        else if (!h.grabbing && h.armed && d < O.grabRadius) {
           h.grabbing = true; h.grabbedAt = now;
           if (allowFit && !hands[1 - h.index].grabbing) {
             // The bar comes to the hand: shift the rider so the grip is in the fist.
@@ -285,6 +293,6 @@ export function createControls({ renderer, holder, rig, options = {} }) {
       window[f]('keydown', onKeyDown); window[f]('keyup', onKeyUp);
       if (!on) keys.clear();
     },
-    release() { for (const h of hands) { h.grabbing = false; h.dots.count = 0; } euro.reset(0); keySteer = 0; },
+    release() { for (const h of hands) { h.grabbing = false; h.armed = false; h.dots.count = 0; } armAllAt = null; euro.reset(0); keySteer = 0; },
   };
 }

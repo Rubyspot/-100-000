@@ -1,6 +1,7 @@
-// Small in-headset UI for Jane: a caption panel over her head and a pokeable
-// orb button (touch it with a fingertip, or pinch while pointing at it).
+// Small in-headset UI for Jane: a caption panel over her head and the
+// floating jetski she offers after the video (touch it to ride).
 import * as THREE from 'three';
+import { loadJetski, makeJetski } from '../jetski/models.js';
 
 function wrap(g, text, maxWidth, maxLines) {
   const words = text.split(/\s+/), lines = [];
@@ -61,66 +62,153 @@ export function makeCaption() {
   return mesh;
 }
 
+// A toy jetski that floats in the air as a button (the model from the race,
+// in Crispy J's yellow and pink, over a little puddle). Touch it with a hand
+// or a controller, pinch or pull the trigger while pointing at it, or click
+// it in the flat preview. show() brings it in; onPress runs once it has
+// spun up after the touch.
+const TOUCH_JOINTS = ['index-finger-tip', 'middle-finger-tip', 'thumb-tip', 'middle-finger-metacarpal'];
+const TOUCH_RADIUS = 0.15, POINT_RADIUS = 0.2, PRESS_SEC = 0.5;
 const tmp = new THREE.Vector3();
-export function makeOrb(label, color) {
+export function makeJetskiButton(label) {
   const group = new THREE.Group();
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.09, 40, 28), new THREE.MeshStandardMaterial({
-    color, metalness: 0.3, roughness: 0.25, emissive: color, emissiveIntensity: 0.25,
+  group.visible = false;
+  const toy = new THREE.Group();
+  toy.rotation.order = 'YXZ';
+  group.add(toy);
+  let model = null;
+  loadJetski().then(() => {
+    const ski = makeJetski(0xffd23f, null, { accent: 0xff4fa3 });
+    ski.mats.paint.emissive.set(0xffd23f); ski.mats.paint.emissiveIntensity = 0.14;
+    ski.mats.trim.emissive.set(0xff4fa3); ski.mats.trim.emissiveIntensity = 0.2;
+    const box = new THREE.Box3().setFromObject(ski.root);
+    const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+    const k = 0.36 / Math.max(size.x, size.z);
+    ski.root.scale.setScalar(k);
+    ski.root.position.copy(centre).multiplyScalar(-k);
+    model = ski.root;
+    toy.add(model);
+    toy.remove(standIn);
+  }).catch((err) => console.warn('Jetski button: the model did not load, showing a ball.', err));
+  // Until the model is there (or if it can't load): a yellow ball.
+  const standIn = new THREE.Mesh(new THREE.SphereGeometry(0.09, 32, 20), new THREE.MeshStandardMaterial({
+    color: 0xffd23f, roughness: 0.3, emissive: 0xffd23f, emissiveIntensity: 0.2,
   }));
-  group.add(ball);
-  // A little wave on the ball, so it reads as "water".
-  const wave = new THREE.Mesh(new THREE.TorusGeometry(0.093, 0.008, 8, 40, Math.PI), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  wave.rotation.z = Math.PI;
-  ball.add(wave);
+  toy.add(standIn);
 
-  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 112;
-  const g = cv.getContext('2d');
-  g.fillStyle = 'rgba(13,20,18,0.72)'; g.beginPath(); g.roundRect(4, 4, 504, 104, 30); g.fill();
-  g.fillStyle = '#f2c45a'; g.font = '600 44px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(label, 256, 58);
+  // The puddle it floats over: rippling water with a pink rim.
+  const puddle = new THREE.Mesh(new THREE.CircleGeometry(0.2, 48), new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: { time: { value: 0 }, glow: { value: 0 } },
+    vertexShader: /* glsl */`
+      varying vec2 vPos;
+      void main() { vPos = position.xy / 0.2; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */`
+      uniform float time, glow; varying vec2 vPos;
+      void main() {
+        float r = length(vPos);
+        float ring = 0.5 + 0.5 * sin(r * 24.0 - time * 4.5);
+        vec3 water = mix(vec3(0.04, 0.55, 0.74), vec3(0.55, 0.95, 0.96), ring * ring * (1.0 - 0.6 * r));
+        float rim = smoothstep(0.74, 0.84, r) * smoothstep(1.0, 0.9, r);
+        vec3 col = mix(water, vec3(1.0, 0.31, 0.64), rim) + glow * vec3(0.5, 0.42, 0.1);
+        float a = smoothstep(1.0, 0.93, r) * mix(0.62, 1.0, rim);
+        gl_FragColor = vec4(col, a);
+      }`,
+  }));
+  puddle.rotation.x = -Math.PI / 2;
+  puddle.position.y = -0.12;
+  puddle.renderOrder = 28;
+  group.add(puddle);
+
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 120;
   const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
-  const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.066), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
-  tag.position.y = -0.16;
+  const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.3 * 120 / 512), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  tag.position.y = -0.215;
+  tag.renderOrder = 29;
   group.add(tag);
+  function drawTag() {
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, 512, 120);
+    g.fillStyle = '#2a1030'; g.strokeStyle = '#ff4fa3'; g.lineWidth = 8;
+    g.beginPath(); g.roundRect(8, 8, 496, 104, 52); g.fill(); g.stroke();
+    g.fillStyle = '#ffd23f'; g.font = '700 50px Fredoka, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(label, 256, 63);
+    tex.needsUpdate = true;
+  }
 
-  let pressed = false, session = null;
+  // For clicks in the flat preview (a ray test needs no drawing).
+  const hit = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 8), new THREE.MeshBasicMaterial());
+  hit.visible = false;
+  group.add(hit);
+
+  let shownAt = -1, pressedAt = -1, fired = false, session = null, now = 0, spin = 0, last = 0;
   const world = new THREE.Vector3();
-  function press() { if (pressed || !group.visible) return; pressed = true; group.userData.onPress && group.userData.onPress(); }
+  function press() {
+    if (pressedAt >= 0 || !group.visible || shownAt < 0 || now - shownAt < 0.7) return;
+    pressedAt = now;
+  }
   function onSelect(e) {
+    if (!group.visible) return;
     const ref = group.userData.renderer.xr.getReferenceSpace();
-    const pose = e.frame.getPose(e.inputSource.targetRaySpace, ref);
-    if (!pose || !group.visible) return;
+    const pose = ref && e.frame.getPose(e.inputSource.targetRaySpace, ref);
+    if (!pose) return;
     const m = new THREE.Matrix4().fromArray(pose.transform.matrix);
     const ray = new THREE.Ray(new THREE.Vector3().setFromMatrixPosition(m), new THREE.Vector3(0, 0, -1).transformDirection(m));
     // XR poses are in the rig's space (the player moves by moving the rig).
     const rig = group.userData.rig;
     const p = rig ? rig.worldToLocal(group.getWorldPosition(world)) : group.getWorldPosition(world);
-    if (ray.distanceSqToPoint(p) < 0.15 * 0.15) press();
+    if (ray.distanceSqToPoint(p) < POINT_RADIUS * POINT_RADIUS) press();
   }
-  group.userData.update = (t, head, renderer, frame, rig) => {
-    group.userData.renderer = renderer;
-    group.userData.rig = rig;
-    ball.rotation.y = t * 0.6;
-    ball.position.y = 0.02 * Math.sin(t * 1.8);
-    ball.scale.setScalar(pressed ? 1.3 : 1 + 0.04 * Math.sin(t * 3));
-    tag.lookAt(head);
-    const s = renderer.xr.getSession();
-    if (s && s !== session) { session = s; s.addEventListener('select', onSelect); }
-    // Poke with an index fingertip.
-    const ref = renderer.xr.getReferenceSpace();
-    if (s && frame && ref && frame.getJointPose) {
+  const touches = (pose, rig) => {
+    if (!pose) return false;
+    tmp.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
+    if (rig) rig.localToWorld(tmp);
+    return tmp.distanceTo(world) < TOUCH_RADIUS;
+  };
+
+  group.userData = {
+    hit,
+    show() { group.visible = true; shownAt = -1; pressedAt = -1; fired = false; drawTag(); },
+    hide() { group.visible = false; },
+    click: press, // flat preview
+    onPress: null,
+    update(t, head, renderer, frame, rig) {
+      group.userData.renderer = renderer;
+      group.userData.rig = rig;
+      now = t;
+      const dt = Math.min(0.1, Math.max(0, t - last)); last = t;
+      if (shownAt < 0) shownAt = t;
+      const pressing = pressedAt >= 0 ? Math.min(1, (t - pressedAt) / PRESS_SEC) : 0;
+      // Pops in, turns slowly and rocks as if on a swell; spins up when touched.
+      const a = Math.min(1, (t - shownAt) / 0.6);
+      const pop = a < 1 ? 1 + 2.7 * Math.pow(a - 1, 3) + 1.7 * Math.pow(a - 1, 2) : 1;
+      spin += dt * (0.7 + 14 * pressing * pressing);
+      toy.rotation.set(0.07 * Math.sin(t * 1.7 + 1), spin, 0.09 * Math.sin(t * 1.3));
+      toy.position.y = 0.016 * Math.sin(t * 1.8) + 0.05 * pressing;
+      toy.scale.setScalar(Math.max(0.0001, pop * (1 + 0.04 * Math.sin(t * 3) + 0.3 * pressing)));
+      puddle.scale.setScalar(Math.max(0.0001, pop * (1 + 0.5 * pressing)));
+      puddle.material.uniforms.time.value = t;
+      puddle.material.uniforms.glow.value = pressing;
+      tag.visible = pressedAt < 0;
+      tag.lookAt(head);
+      if (pressedAt >= 0) {
+        if (!fired && pressing >= 1) { fired = true; group.userData.onPress && group.userData.onPress(); }
+        return;
+      }
+      const s = renderer.xr.getSession();
+      if (s && s !== session) { session = s; s.addEventListener('select', onSelect); }
+      const ref = renderer.xr.getReferenceSpace();
+      if (!s || !frame || !ref) return;
       group.getWorldPosition(world);
       for (const src of s.inputSources) {
-        const tip = src.hand && src.hand.get('index-finger-tip');
-        const pose = tip && frame.getJointPose(tip, ref);
-        if (!pose) continue;
-        tmp.set(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
-        if (rig) rig.localToWorld(tmp);
-        if (tmp.distanceTo(world) < 0.12) press();
+        if (src.hand && frame.getJointPose) {
+          for (const name of TOUCH_JOINTS) {
+            const joint = src.hand.get(name);
+            if (joint && touches(frame.getJointPose(joint, ref), rig)) press();
+          }
+        } else if (src.gripSpace && touches(frame.getPose(src.gripSpace, ref), rig)) press();
       }
-    }
+    },
   };
-  group.userData.click = press; // flat preview
-  group.userData.ball = ball;
   return group;
 }

@@ -6,9 +6,9 @@
 // bend, a fast rock canal, a slalom between limestone stacks, a tighter
 // canal and a jump back into the lagoon, with inflatable ramps on the way.
 // Seagulls fly ahead and drop a trail of $100 bills along the racing line.
-// Ride through them: each bill in a row is worth $100 more, up to $1,000,
-// and the song's $100,000 is there for a clean lap. Jane (her first scan)
-// races you standing on her own jetski.
+// Ride through them: each bill in a row is worth $250 more, up to $2,500,
+// and the song's $100,000 comes with ease on a decent lap. Jane (her first
+// scan) races you standing on her own jetski.
 //
 //   const race = createRace({ renderer, embedded, onExit, options });
 //   await race.ready;       // assets loaded, world built, shaders compiled
@@ -24,7 +24,7 @@ import { createWake, createSpray, createStreaks, createConfetti } from './effect
 import { Sfx } from './sfx.js';
 import { createControls } from './controls.js';
 import { createHud, loadFonts, money, clock, COLORS } from './hud.js';
-import { loadGullAssets, createGulls, MAX_COMBO } from './gulls.js';
+import { loadGullAssets, createGulls, MAX_COMBO, STEP_VALUE } from './gulls.js';
 
 export const GOAL = 100000;
 const START_BACK = 12;     // the grid is this far before the start arch, metres
@@ -34,7 +34,7 @@ const clamp = THREE.MathUtils.clamp;
 
 export function createRace({ renderer, embedded = false, onExit = null, options = {} }) {
   const O = {
-    autopilot: false,      // true or 'sloppy': rides by itself, for testing
+    autopilot: false,      // true, 'wander' or 'sloppy': rides by itself, for testing
     chase: false, map: 0,  // flat previews from behind (or 'jane': looking at her) and from above
     look: null,            // flat preview: pitch of the rider's view, radians
     at: null,              // start at this control point (testing)
@@ -72,7 +72,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
 
   const race = {
     state: 'off', clock: 0, countdown: 0, lastBeep: 9, dist: -START_BACK, idx: 0, lat: 0, off: 0, finish: null, rank: 2,
-    barkAt: -99, msgUntil: 0, doneAt: 0, readyAt: 0, stuck: 0, lost: 0, wrong: 0, gateNext: 1, goalHit: false, halfHit: false, maxHit: false,
+    barkAt: -99, msgUntil: 0, doneAt: 0, readyAt: 0, stuck: 0, lost: 0, wrong: 0, gateNext: 1, goalHit: false, halfHit: false, maxHit: false, moreHit: 1,
     hits: 0, airPeak: 0, wasRamp: false, result: null, shown: false, lastCanal: false, greeted: false, shift: 0,
   };
   const ai = { dist: -START_BACK, idx: 0, lat: 0, off: 0, finish: null, side: 0 };
@@ -160,7 +160,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     player.craft.thrustScale = 1; jane.craft.thrustScale = 1;
     Object.assign(race, {
       state: 'ready', clock: 0, dist: d0, idx: i, finish: null, rank: 2, readyAt: elapsed, stuck: 0, lost: 0, wrong: 0,
-      goalHit: false, halfHit: false, maxHit: false, hits: 0, airPeak: 0, wasRamp: false, msgUntil: 0, barkAt: elapsed - 4,
+      goalHit: false, halfHit: false, maxHit: false, moreHit: 1, hits: 0, airPeak: 0, wasRamp: false, msgUntil: 0, barkAt: elapsed - 4,
       result: null, shown: false, lastCanal: false, greeted: false, shift: 0,
     });
     race.gateNext = world.gates.findIndex((g, n) => n > 0 && g.idx * course.step > d0);
@@ -191,18 +191,26 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     hud.pop('+' + money(value), b.gold ? COLORS.mint : s.combo >= MAX_COMBO ? COLORS.yellow : COLORS.cream);
     confetti.burst(b.pos.x, b.pos.y, b.pos.z, b.gold ? 46 : 7, b.gold ? 5 : 2.4, pc.vx * 0.8, pc.vz * 0.8);
     pc.thrustScale = 1 + 0.012 * s.combo;
-    if (b.gold) { pc.boost = Math.max(pc.boost, 1.6); sfx.boost(); bark(pick(['Golden! Show-off!', 'Ooh, the gold one!']), true); }
+    if (b.gold) { pc.boost = Math.max(pc.boost, 1.6); sfx.boost(); bark(pick(['Golden! Ten grand, just like that!', 'Ooh, the gold one!']), true); }
     if (s.combo >= MAX_COMBO && !race.maxHit) {
       race.maxHit = true; race.msgUntil = elapsed + 1.6;
-      hud.panel('CRISPY x10!', 'Every bill is $1,000 now', { color: COLORS.pink });
+      hud.panel('CRISPY x10!', `Every bill is ${money(STEP_VALUE * MAX_COMBO)} now`, { color: COLORS.pink });
       sfx.chime(5);
     }
-    if (!race.halfHit && s.money >= GOAL / 2) { race.halfHit = true; bark('Halfway to a hundred grand. Not bad!', true); }
+    if (!race.halfHit && s.money >= GOAL / 2) { race.halfHit = true; bark('Halfway to a hundred grand. Keep flowing!', true); }
+    // The song's line: "Blessings to me, a hundred thousand, it happened with ease."
     if (!race.goalHit && s.money >= GOAL) {
-      race.goalHit = true; race.msgUntil = elapsed + 2.6;
-      hud.panel('$100,000!', 'Okay, okay. You can keep it.', { color: COLORS.yellow });
+      race.goalHit = true; race.msgUntil = elapsed + 2.8;
+      hud.panel('$100,000!', 'It happened with ease', { color: COLORS.yellow });
       sfx.fanfare(true);
       confetti.burst(pc.x, pc.y + 2.2, pc.z, 90, 7, pc.vx, pc.vz);
+      bark('Blessings to you! A hundred thousand!', true);
+    }
+    const more = Math.floor(s.money / GOAL);
+    if (more >= 2 && more > race.moreHit) {
+      race.moreHit = more;
+      bark(more === 2 ? 'Two hundred grand?! Abundance never dries out!' : 'Okay, save some for the seagulls!', true);
+      sfx.chime(6);
     }
   }
   function onMiss() {
@@ -317,7 +325,9 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     drive.steer = input.steer;
     if (race.state === 'done') { drive.throttle = elapsed - race.doneAt < 2 ? 0.35 : 0; drive.steer = follow(pc, race, 0); }
     else if (O.autopilot && racing) {
-      drive.throttle = 1; drive.steer = follow(pc, race, 0);
+      // 'wander' drifts off the line and back like a first-time rider; 'sloppy' weaves into walls.
+      const wander = O.autopilot === 'wander' ? 3.6 * (Math.sin(elapsed * 0.31) + 0.6 * Math.sin(elapsed * 0.83 + 1)) : 0;
+      drive.throttle = 1; drive.steer = follow(pc, race, wander, O.autopilot === 'wander' ? 1.8 : 2.6);
       if (O.autopilot === 'sloppy') drive.steer = clamp(drive.steer + Math.sin(elapsed * 1.1) * 0.9, -1, 1);
     }
     pc.step(dt, drive, env);
@@ -428,6 +438,14 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
         const far = Math.hypot(h.x, h.z) > 0.3 || Math.abs(h.y - eyeY) > 0.22;
         race.shift = far ? (race.shift || 0) + dt : 0;
         if (race.shift > 0.8) { race.shift = 0; calibrate(xrFrame); }
+      } else if (race.state !== 'ready' && readHead(xrFrame)) {
+        // Sat down or stood up in the middle of the ride: the seat follows,
+        // eased in like the bar's fit. Leaning into a turn is not enough to move it.
+        rig.updateMatrix();
+        const h = _a.copy(head.pos).applyMatrix4(rig.matrix).add(layout.fit);
+        const far = Math.abs(h.y - eyeY) > 0.3 || Math.hypot(h.x, h.z) > 0.45;
+        race.shift = far ? (race.shift || 0) + dt : 0;
+        if (race.shift > 1.5) { race.shift = 0; layout.fit.x -= h.x; layout.fit.y += eyeY - h.y; layout.fit.z -= h.z; }
       }
     } else {
       calibrated = true;
@@ -446,8 +464,8 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     if (race.state === 'ready') {
       hud.gripHint(xr && !input.riding);
       if (now > race.msgUntil) {
-        if (xr && (input.handsSeen || input.device === 'hands')) hud.panel('GRAB THE BAR', 'Make a fist on a grip. One hand is enough!', { size: 120 });
-        else if (xr) hud.panel('GRAB THE BAR', 'Hands: make a fist on a grip. Controller: squeeze the trigger.', { size: 120 });
+        if (xr && (input.handsSeen || input.device === 'hands')) hud.panel('GRAB THE BAR', 'Sit down, then make a fist on a grip. One hand is enough!', { size: 120 });
+        else if (xr) hud.panel('GRAB THE BAR', 'Sit down. Hands: make a fist on a grip. Controller: squeeze the trigger.', { size: 120 });
         else hud.panel('PRESS SPACE', 'W or ↑ go · A / D or ← → steer', { size: 120 });
       }
       if (!race.greeted && now - race.readyAt > 1.2) { race.greeted = true; bark('Follow the gulls and grab the cash!', true); }
@@ -474,11 +492,11 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     if (race.state === 'race') {
       if (ai.finish === null && ai.dist >= course.length) { ai.finish = race.clock; bark('Finished! Come on, slowpoke!', true); }
       const rank = race.dist >= ai.dist ? 1 : 2;
-      if (rank !== race.rank && race.clock > 3) bark(pick(rank === 1 ? ['Hey! Where did you learn that?', 'Oh no you don\'t!'] : ['See you at the finish!', 'Too slow, baby!']));
+      if (rank !== race.rank && race.clock > 3) bark(pick(rank === 1 ? ['Hey! Where did you learn that?', 'Oh no you don\'t!'] : ['See you at the finish!', 'Catch me if you can!']));
       race.rank = rank;
       if (race.wrong > 2.5) { hud.panel('WRONG WAY', 'Turn around', { color: COLORS.pink, size: 130 }); race.msgUntil = now + 0.3; }
       else if (now > race.msgUntil) hud.panel('');
-      if (!race.lastCanal && race.dist > course.cpIdx[22] * course.step) { race.lastCanal = true; bark('Last canal! Don\'t choke!', true); }
+      if (!race.lastCanal && race.dist > course.cpIdx[22] * course.step) { race.lastCanal = true; bark('Last canal! Stay in the flow!', true); }
       if (race.dist >= course.length) {
         race.finish = race.clock; race.state = 'done'; race.doneAt = now;
         const won = ai.finish === null, s = gulls.state, rich = s.money >= GOAL;
@@ -488,8 +506,8 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
         race.msgUntil = now + 1.4;
         race.result = {
           won, title: won ? 'YOU WIN!' : 'JANE WINS!', time: race.finish, money: s.money, bills: s.taken, total: s.total, best: Math.max(1, s.best),
-          line: rich ? (won ? 'A hundred grand AND the win. Marry me.' : 'I won, but you got the $100,000. Call it even?')
-            : won ? `Fast! Now get the last ${money(GOAL - s.money)}.` : `${(race.finish - ai.finish).toFixed(1)} s behind me. Again?`,
+          line: rich ? (won ? 'A hundred grand AND the win. So crispy!' : 'I won, but you got your $100,000. Call it even?')
+            : won ? `Fast! ${money(GOAL - s.money)} more and it's a hundred grand.` : `${(race.finish - ai.finish).toFixed(1)} s behind me, ${money(GOAL - s.money)} to go. Again?`,
         };
       }
     } else if (race.state === 'done') {
@@ -615,6 +633,25 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     if (c) choose(c);
   }
 
+  // The race runs at 72 Hz in the headset, which leaves room for the water
+  // and the islands; the rate the session had before comes back afterwards.
+  let rateBefore = 0;
+  function setRate(racing) {
+    try {
+      const session = renderer.xr.getSession();
+      if (!session || !session.updateTargetFrameRate || !session.supportedFrameRates) return;
+      if (racing) {
+        const rates = Array.from(session.supportedFrameRates);
+        const want = rates.includes(72) ? 72 : Math.min(...rates);
+        rateBefore = session.frameRate || 0;
+        if (want !== rateBefore) session.updateTargetFrameRate(want).catch(() => {});
+      } else if (rateBefore) {
+        if (rateBefore !== session.frameRate) session.updateTargetFrameRate(rateBefore).catch(() => {});
+        rateBefore = 0;
+      }
+    } catch { /* the rate stays as it is */ }
+  }
+
   function start() {
     if (!built || active) return;
     active = true;
@@ -623,12 +660,14 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     fadeV = 1; fadeTo = 0;
     controls.listen(true);
     renderer.domElement.addEventListener('click', onClick);
+    setRate(true);
     startAudio();
   }
   function stop() {
     if (!active) return;
     active = false;
     race.state = 'off';
+    setRate(false);
     controls.listen(false); controls.release();
     renderer.domElement.removeEventListener('click', onClick);
     if (hud) hud.gripHint(false);

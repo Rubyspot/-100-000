@@ -16,12 +16,17 @@ export const JANE_SCAN = { height: 3.675, feetY: 0.099, cx: -0.075, cz: -0.69 };
 export const JANE_HEIGHT = 1.75;
 
 const asset = (path) => new URL(path, import.meta.url).href;
-let template = null;
+let template = null, loading = null;
 
-export async function loadJetski() {
-  const gltf = await new GLTFLoader().loadAsync(asset('./assets/kawasaki-st15f.glb'));
-  template = gltf.scene;
-  return template;
+// Loads the model once; the race and the opening's jetski button share it.
+export function loadJetski() {
+  if (!loading) {
+    loading = new GLTFLoader().loadAsync(asset('./assets/kawasaki-st15f.glb')).then((gltf) => {
+      template = gltf.scene;
+      return template;
+    });
+  }
+  return loading;
 }
 
 const PAINT = { paint: 'paint', trim: 'trim', seat: 'seat', bar: 'bar', dark: 'dark' };

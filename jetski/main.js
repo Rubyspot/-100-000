@@ -92,10 +92,6 @@ enterBtn.addEventListener('click', async () => {
     });
     session.addEventListener('end', showCard);
     await renderer.xr.setSession(session);
-    if (session.updateTargetFrameRate && session.supportedFrameRates) {
-      const rates = Array.from(session.supportedFrameRates);
-      session.updateTargetFrameRate(rates.includes(72) ? 72 : Math.min(...rates)).catch(() => {});
-    }
     const ref = renderer.xr.getReferenceSpace();
     if (ref && ref.addEventListener) ref.addEventListener('reset', () => race.recenter());
     $('ui').hidden = true;
