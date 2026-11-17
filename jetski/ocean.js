@@ -1,22 +1,27 @@
-// Lagoon water. A gentle Gerstner swell on a camera-following polar grid,
-// detail from two scrolling tileable normal maps, and a colour that comes
-// from what is under it: the shader looks through the surface at a sand bed
-// (with sea-grass patches and dancing caustics) whose depth is baked in the
-// world's water map, and absorbs red first on the way down and back, so
-// shallows turn pale aqua, the lagoon turquoise and the open sea deep blue.
-// On top: sky reflections that give way to rock and trees inside the canals,
-// cliff shadows, sun glitter, crest and shore foam. The same wave sum runs
-// on the CPU so the jetskis float, jump and land on the surface you see.
+// The sea. A Gerstner swell on a camera-following polar grid with ripples from
+// three scrolling layers of a tileable normal map, drawn the way open water
+// looks from a jetski: a deep body colour that shows in the wave faces turned
+// toward you, the sky mirrored in the faces turned away (rock and trees
+// instead of sky inside the canals), a road of sun glitter, light glowing
+// through the crests that face the sun, whitecaps, and foam along the shore.
+// The body colour comes from the depth baked in the world's water map: pale
+// sand shows through the shallows off the beaches (with darker patches of
+// sea grass), the lagoon runs turquoise to teal, and the water off the rocks
+// and the open sea are deep blue, because water takes the red out of the
+// light first and then the green. Cliffs throw their shadows on it. The same
+// wave sum runs on the CPU so the jetskis float, jump and land on the
+// surface you see.
 import * as THREE from 'three';
 import { SKY_SAMPLE_GLSL } from './sky.js';
 
 const WAVES = [ // direction (deg), wavelength (m), amplitude (m), steepness
-  [30, 46, 0.26, 0.10],
-  [-18, 27, 0.20, 0.13],
-  [66, 17, 0.11, 0.12],
-  [-55, 10.5, 0.055, 0.11],
-  [118, 6.2, 0.028, 0.09],
-  [-140, 3.9, 0.014, 0.07],
+  [26, 56, 0.40, 0.10],
+  [-14, 33, 0.31, 0.14],
+  [63, 21, 0.16, 0.13],
+  [-57, 13, 0.08, 0.12],
+  [114, 8, 0.04, 0.10],
+  [-143, 5, 0.021, 0.08],
+  [165, 3.2, 0.011, 0.06],
 ].map(([deg, L, A, steep]) => {
   const a = THREE.MathUtils.degToRad(deg), k = (2 * Math.PI) / L;
   return { dx: Math.cos(a), dz: Math.sin(a), k, w: Math.sqrt(9.81 * k), A, steep, f0: L * 3.5, f1: L * 7 };
@@ -24,7 +29,7 @@ const WAVES = [ // direction (deg), wavelength (m), amplitude (m), steepness
 
 // Tileable detail: random waves with whole-number wave vectors over a
 // 256² tile. RG hold the surface slope, B a pattern of thin bright veins
-// (foam on top, caustics on the bed).
+// (foam).
 function makeDetailTexture() {
   const N = 256;
   const waves = [];
@@ -176,9 +181,12 @@ export function createOcean({ sky, landTexture, landBounds, landDist }) {
         vec3 V = toCam / dist;
         vec2 p = vWorld.xz;
 
-        vec4 d1 = texture2D(detailMap, p / 19.0 + vec2(0.021, 0.013) * time);
-        vec4 d2 = texture2D(detailMap, p / 6.7 + vec2(-0.034, 0.041) * time);
-        vec2 slope = (d1.rg - 0.5) * 0.5 + (d2.rg - 0.5) * 0.38;
+        // Ripples: fine and middling ones near the jetski, and a broad chop
+        // that keeps the far water from going flat.
+        vec4 d1 = texture2D(detailMap, p / 17.0 + vec2(0.021, 0.013) * time);
+        vec4 d2 = texture2D(detailMap, p / 6.1 + vec2(-0.034, 0.041) * time);
+        vec4 d3 = texture2D(detailMap, p / 67.0 + vec2(0.006, -0.010) * time);
+        vec2 slope = (d1.rg - 0.5) * 0.55 + (d2.rg - 0.5) * 0.35 + (d3.rg - 0.5) * 0.40;
         vec3 N = normalize(vNormal + vec3(-slope.x, 0.0, -slope.y));
 
         vec4 lm = landAt(p);
@@ -186,55 +194,57 @@ export function createOcean({ sky, landTexture, landBounds, landDist }) {
         float sun = lm.b;                  // 1 in sunlight, 0 in a cliff's shadow
         float cover = lm.a;                // how high the land stands around
 
-        float ndv = max(dot(N, V), 0.0);
+        // Far away the ripples are smaller than a pixel. On average they
+        // face the eye a little, so the sea mirrors the sky above the
+        // horizon rather than the haze on it, and stays darker than the sky.
+        float far = smoothstep(40.0, 600.0, dist);
+        float ndv = max(dot(N, V), mix(0.05, 0.13, far));
         float F = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
 
-        // Looking through the surface: the view bends toward straight down,
-        // so the bed is seen a little this side of where the eye points.
+        // Under the surface: the view bends toward straight down, so the bed
+        // is seen a little this side of where the eye points, and it wobbles
+        // with the ripples.
         float cosI = max(V.y, 0.04);
         float sinR = sqrt(1.0 - cosI * cosI) / 1.33;
         float cosR = sqrt(1.0 - sinR * sinR);
         vec2 away = -normalize(V.xz + vec2(1e-5));
-        vec2 bed = p + away * (lm.g * 16.0) * (sinR / cosR) + N.xz * (lm.g * 16.0) * 0.7;
+        vec2 bed = p + away * (lm.g * 16.0) * (sinR / cosR) + N.xz * (lm.g * 16.0) * 0.6;
         float depth = landAt(bed).g * 16.0;
-
-        // Sand, patches of sea grass, and caustics where the sun reaches.
-        vec4 s1 = texture2D(detailMap, bed / 37.0);
-        float grass = smoothstep(0.55, 0.66, s1.r) * smoothstep(1.4, 3.2, depth);
-        vec3 bedCol = mix(vec3(0.93, 0.87, 0.70) * (0.9 + 0.2 * d2.b), vec3(0.13, 0.28, 0.20), grass * 0.8);
-        float c1 = texture2D(detailMap, bed / 5.3 + vec2(0.03, 0.017) * time).b;
-        float c2 = texture2D(detailMap, bed / 3.1 - vec2(0.021, 0.028) * time).b;
-        float caust = (c1 + c2) * 0.5 + c1 * c2 * 3.0;
-        bedCol *= 0.8 + caust * 0.7 * sun * exp(-depth * 0.2);
-
-        // Water takes the red out first, on the way down and back up.
+        vec4 s1 = texture2D(detailMap, bed / 41.0);
+        float grass = smoothstep(0.52, 0.70, s1.r) * smoothstep(1.2, 3.0, depth);
+        vec3 bedCol = mix(vec3(0.86, 0.80, 0.63), vec3(0.09, 0.20, 0.14), grass * 0.75);
+        // Water takes the red out first, on the way down and back up, then
+        // the green; what is left where it is deep is the sea's own blue.
         float path = depth * (1.0 + 1.0 / max(cosR, 0.4));
-        vec3 T = exp(-vec3(0.40, 0.080, 0.042) * path);
-        vec3 scatter = vec3(0.010, 0.19, 0.33);
-        vec3 lit = vec3(1.0, 0.98, 0.94) * mix(0.40, 1.0, sun);
-        vec3 body = (bedCol * T + scatter * (1.0 - T)) * lit;
-        // A little light through the crests.
-        body += vec3(0.05, 0.30, 0.26) * clamp(vCrest * 2.0, 0.0, 1.0) * sun * 0.5;
+        vec3 T = exp(-vec3(0.85, 0.21, 0.15) * path);
+        vec3 lit = vec3(1.0, 0.97, 0.91) * mix(0.34, 1.15, sun);
+        vec3 body = (bedCol * T + vec3(0.004, 0.058, 0.130) * (1.0 - T)) * lit;
+        // Light glowing through the crests that stand between you and the sun.
+        vec3 Lh = normalize(vec3(sunDir.x, 0.0, sunDir.z));
+        float toward = pow(max(dot(-V, Lh), 0.0), 3.0);
+        float lift = clamp(vCrest * 1.8 + 0.15, 0.0, 1.0);
+        body += vec3(0.022, 0.52, 0.40) * sunColor * (toward * 0.9 + 0.12) * lift * 0.5 * sun;
 
         // Reflection: sky, or the rock and trees that stand around the water.
         vec3 R = reflect(-V, N);
-        R.y = abs(R.y) + 0.01;
+        R.y = abs(R.y) + 0.03 + 0.09 * far;
         R = normalize(R);
         vec4 refl = skySample(R);
         float horizon = cover * 1.3;
         float landRefl = (1.0 - smoothstep(horizon - 0.14, horizon + 0.1, R.y)) * smoothstep(0.03, 0.2, cover);
         vec3 rockRefl = mix(vec3(0.16, 0.22, 0.13), vec3(0.44, 0.42, 0.36), smoothstep(0.05, 0.6, R.y)) * (0.45 + 0.55 * sun);
-        vec3 col = mix(body, mix(refl.rgb, rockRefl, landRefl), F);
+        vec3 col = mix(body, mix(refl.rgb * 0.9, rockRefl, landRefl), F);
 
-        // Sun glitter.
+        // Sun glitter: sharp sparks near you, a broad road of them far off.
         vec3 Hh = normalize(V + sunDir);
         float nh = max(dot(N, Hh), 0.0);
-        float spec = pow(nh, 900.0) * 30.0 + pow(nh, 110.0) * 1.1;
+        float spec = pow(nh, mix(1400.0, 520.0, far)) * mix(40.0, 16.0, far) + pow(nh, mix(160.0, 90.0, far)) * 1.6;
         col += sunColor * spec * sun * (1.0 - refl.a * 0.8) * (1.0 - landRefl * 0.7);
 
-        // Foam: crests, shorelines, and lace drifting off the rocks.
+        // Foam: whitecaps on the crests, a line along the shore, and lace
+        // drifting off the rocks.
         float fA = d1.b, fB = d2.b;
-        float crestFoam = smoothstep(0.42, 0.7, vCrest + fA * 0.3) * (0.3 + 0.7 * fB) * 0.6;
+        float crestFoam = smoothstep(0.46, 0.76, vCrest + fA * 0.3) * (0.3 + 0.7 * fB);
         float shore = 1.0 - smoothstep(0.1, 1.5, land);
         float surf = smoothstep(0.35, 0.85, 0.5 + 0.5 * sin(land * 1.6 - time * 1.5) + fA * 0.6 - 0.3);
         float lace = (1.0 - smoothstep(0.8, 6.0, land)) * surf * fB * 0.4;
