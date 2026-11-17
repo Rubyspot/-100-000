@@ -1,6 +1,10 @@
-// Riding controls. Hands first, and one hand is enough:
-//   - Make a fist (or pinch) on either grip: that hand rides, full throttle.
-//     Open it to coast.
+// Riding controls. Hands first:
+//   - Make a fist (or pinch) on a grip to hold it. Either hand steers, and
+//     one hand is enough.
+//   - The throttle is the right hand, like the lever on a real jetski: a
+//     right fist on the grip is full throttle, lifting the index finger off
+//     eases off, opening the hand lets go. (throttleHand: 'any' lets either
+//     hand do it.)
 //   - Steer by turning the fist like a dial, by turning it like a handlebar,
 //     or by pushing the grip forward and pulling it back around the bar's
 //     pivot. All three add up, so whatever feels natural works.
@@ -42,6 +46,8 @@ export function createControls({ renderer, holder, rig, options = {} }) {
   const O = {
     rollFull: deg(35), yawFull: deg(45), arcFull: deg(40),   // one hand: full lock at these angles
     twoYawFull: deg(28), twoRollFull: deg(30),               // both hands
+    gain: 1.3,                // how strongly the hands steer: full lock comes at the angles above divided by this
+    throttleHand: 'right',    // or 'any'
     grabRadius: 0.24, fitMax: 0.18, dead: 0.04, expo: 1.3,
     ...options,
   };
@@ -58,6 +64,7 @@ export function createControls({ renderer, holder, rig, options = {} }) {
     holder.add(dots);
     return {
       side, index, dots, seen: false, lostFor: 9, closed: false, pinching: false, grabbing: false, grabbedAt: 0, ratio: 2, armed: false,
+      trigger: 2, gas: 0,                            // curl of the index finger, and the throttle it gives
       joints: new Float32Array(JOINTS * 3),          // in the holder's space
       palm: new THREE.Vector3(), knuckle: new THREE.Vector3(), tip: new THREE.Vector3(),
       palmWorld: new THREE.Vector3(), tipWorld: new THREE.Vector3(),
@@ -104,6 +111,7 @@ export function createControls({ renderer, holder, rig, options = {} }) {
       ratio += r;
     }
     h.ratio = ratio / 3;
+    h.trigger = index;
     if (h.closed && h.ratio > 1.58) h.closed = false;
     else if (!h.closed && h.ratio < 1.38 && index < 1.5) h.closed = true;
     const pinch = joint(h, J.thumbTip, _b).distanceTo(joint(h, J.indexTip, _v));
@@ -193,12 +201,18 @@ export function createControls({ renderer, holder, rig, options = {} }) {
           h.part.roll = h.part.yaw = h.part.arc = 0; h.one = 0;
           input.grabbed = h;
         }
-        if (h.grabbing) oneHand(h, _a.copy(h.palm).add(layout.fit), layout.pivot);
-        else input.freeHands.push(h.palmWorld);
+        if (h.grabbing) {
+          oneHand(h, _a.copy(h.palm).add(layout.fit), layout.pivot);
+          // The index finger is the throttle lever: curled with the fist it
+          // is full throttle, lifted off the grip it eases off. A pinch is full.
+          const want = h.pinching ? 1 : clamp((1.8 - h.trigger) / 0.35, 0, 1);
+          h.gas += (want - h.gas) * Math.min(1, dt * 12);
+        } else input.freeHands.push(h.palmWorld);
       } else {
         h.lostFor += dt;
         if (h.lostFor > 0.45) h.grabbing = false;
       }
+      if (!h.grabbing) h.gas = 0;
     }
     input.handsSeen = seenCount;
 
@@ -216,15 +230,17 @@ export function createControls({ renderer, holder, rig, options = {} }) {
       }
       wasTwo = riding.length === 2;
       twoW += ((wasTwo ? 1 : 0) - twoW) * Math.min(1, dt * 6);
-      let s = euro.filter(one + (both - one) * twoW, Math.max(dt, 1e-3));
+      let s = euro.filter((one + (both - one) * twoW) * O.gain, Math.max(dt, 1e-3));
       s = Math.abs(s) < O.dead ? 0 : (s - Math.sign(s) * O.dead) / (1 - O.dead);
       steer = Math.sign(s) * Math.pow(Math.min(1, Math.abs(s)), O.expo);
-      throttle = 1; engaged = true; device = 'hands';
+      for (const h of riding) if (h.index === 1 || O.throttleHand === 'any') throttle = Math.max(throttle, h.gas);
+      engaged = true; device = 'hands';
     } else {
       euro.reset(0); twoW = 0; wasTwo = false;
     }
 
-    // Controllers: trigger or grip = go, tilt the controller or push the stick to steer.
+    // Controllers: the right trigger is the throttle; holding a trigger or a
+    // grip button and tilting that controller steers, and so does the stick.
     if (session && frame && ref) {
       for (const src of session.inputSources) {
         const gp = src.gamepad;
@@ -237,13 +253,13 @@ export function createControls({ renderer, holder, rig, options = {} }) {
           pointer(holder.localToWorld(_v.set(p.x, p.y, p.z).applyMatrix4(rig.matrix)));
         }
         if (trig > 0.25 || squeeze) {
-          throttle = Math.max(throttle, Math.max(trig, squeeze));
+          if (trig > 0.25 && (src.handedness !== 'left' || O.throttleHand === 'any')) throttle = Math.max(throttle, trig);
           engaged = true; device = 'controller';
           if (pose) {
             const o = pose.transform.orientation;
             _v.set(1, 0, 0).applyQuaternion(_q.set(o.x, o.y, o.z, o.w)).applyQuaternion(_rigQ);
             if (!ctrlNeutral.has(src)) ctrlNeutral.set(src, rollOf(_v));
-            const s = wrap(rollOf(_v) - ctrlNeutral.get(src)) / O.rollFull;
+            const s = wrap(rollOf(_v) - ctrlNeutral.get(src)) / O.rollFull * O.gain;
             if (Math.abs(s) > O.dead) steer += s - Math.sign(s) * O.dead;
           }
         } else ctrlNeutral.delete(src);
@@ -259,7 +275,7 @@ export function createControls({ renderer, holder, rig, options = {} }) {
     keySteer += ((kl ? 1 : 0) - (kr ? 1 : 0) - keySteer) * Math.min(1, dt * 5);
     if (Math.abs(keySteer) > 0.01) { steer = keySteer; device = 'keys'; }
     if (keys.has('KeyW') || keys.has('ArrowUp')) { throttle = 1; device = 'keys'; }
-    if (keys.has('Space') || throttle > 0) engaged = true;
+    if (keys.has('Space') || keys.has('KeyW') || keys.has('ArrowUp')) engaged = true;
     if (keys.has('KeyR') || keys.has('Enter')) input.confirm = true;
     if (keys.has('Escape') || keys.has('KeyB')) input.back = true;
 
@@ -293,6 +309,6 @@ export function createControls({ renderer, holder, rig, options = {} }) {
       window[f]('keydown', onKeyDown); window[f]('keyup', onKeyUp);
       if (!on) keys.clear();
     },
-    release() { for (const h of hands) { h.grabbing = false; h.armed = false; h.dots.count = 0; } armAllAt = null; euro.reset(0); keySteer = 0; },
+    release() { for (const h of hands) { h.grabbing = false; h.armed = false; h.gas = 0; h.dots.count = 0; } armAllAt = null; euro.reset(0); keySteer = 0; },
   };
 }

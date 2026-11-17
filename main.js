@@ -1176,10 +1176,12 @@ function updatePlayBall(T, t) {
 // it out; if it can't be loaded, the jetski opens the race's own page.
 const raceBox = { api: null, on: false, ref: null };
 // The ride's own switches work on this page too: ?bar=below,ahead (grips this
-// far below and ahead of the eyes, metres), ?riser=, ?vignette=0, ?streaks=0,
+// far below and ahead of the eyes, metres), ?riser=, ?steer=1.3 (how strongly
+// the hands steer), ?throttle=any (either hand), ?vignette=0, ?streaks=0,
 // ?heave=0 (see jetski/README.md).
 const raceBar = (params.get('bar') || '').split(',').map(parseFloat);
 const raceRiser = parseFloat(params.get('riser'));
+const raceSteer = parseFloat(params.get('steer'));
 const raceReady = (params.get('race') === '0' ? Promise.resolve(null) : import('./jetski/race.js').then(({ createRace }) => {
   const r = createRace({
     renderer, embedded: true,
@@ -1193,6 +1195,8 @@ const raceReady = (params.get('race') === '0' ? Promise.resolve(null) : import('
       heave: params.get('heave') === '0' ? 0 : 1,
       ...(raceBar.length === 2 && raceBar.every(Number.isFinite) ? { below: raceBar[0], ahead: raceBar[1] } : {}),
       ...(Number.isFinite(raceRiser) ? { riser: raceRiser } : {}),
+      ...(Number.isFinite(raceSteer) ? { steer: raceSteer } : {}),
+      ...(params.get('throttle') === 'any' ? { throttle: 'any' } : {}),
     },
   });
   return r.ready.then(() => { raceBox.api = r; return r; });

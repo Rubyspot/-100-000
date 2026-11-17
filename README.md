@@ -34,7 +34,9 @@ URL options: `?debug` (fps and video source label in headset), `?to=desk` (fly t
 and their order), `?hold=10` (seconds on each pose), `?music=0.55`
 (song volume, 0 mutes), `?jane=off` (no Jane), `?autostart` (flat preview), `?race=0` (leave the jetski
 race out; the floating jetski then opens `/jetski/`), `?aa=1` (multisampling for the whole session: off
-by default because it costs frame rate with splats, but the race's edges are smoother with it).
+by default because it costs frame rate with splats, but the race's edges are smoother with it),
+`?steer=1.3` and `?throttle=any` (the race's steering gain and which hand is the throttle, see
+[jetski/README.md](jetski/README.md)).
 
 Run locally: `python3 -m http.server` in this folder, open http://localhost:8000.
 

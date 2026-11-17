@@ -18,7 +18,7 @@ import * as THREE from 'three';
 import { createSky, SUN_DIR, HAZE_COLOR } from './sky.js';
 import { createOcean } from './ocean.js';
 import { buildWorld, PINK, YELLOW } from './world.js';
-import { Craft } from './craft.js';
+import { Craft, bumpCrafts } from './craft.js';
 import { loadJetski, makeJetski, makeGloves, makeJaneRider, makeSimpleRider, SEAT } from './models.js';
 import { createWake, createSpray, createStreaks, createConfetti } from './effects.js';
 import { Sfx } from './sfx.js';
@@ -41,6 +41,8 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     debug: false, music: true, vignette: true, splat: true, streaks: true,
     heave: 1,              // 0 keeps the rider's view at a fixed height
     below: SEAT.below, ahead: SEAT.ahead, riser: SEAT.riser,
+    steer: 1.3,            // how strongly the hands steer (1 = full lock at a 35 degree turn of the fist)
+    throttle: 'right',     // which hand is the throttle: 'right' or 'any'
     exposure: 1.0,
     ...options,
   };
@@ -73,7 +75,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
   const race = {
     state: 'off', clock: 0, countdown: 0, lastBeep: 9, dist: -START_BACK, idx: 0, lat: 0, off: 0, finish: null, rank: 2,
     barkAt: -99, msgUntil: 0, doneAt: 0, readyAt: 0, stuck: 0, lost: 0, wrong: 0, gateNext: 1, goalHit: false, halfHit: false, maxHit: false, moreHit: 1,
-    hits: 0, airPeak: 0, wasRamp: false, result: null, shown: false, lastCanal: false, greeted: false, shift: 0,
+    hits: 0, airPeak: 0, wasRamp: false, result: null, shown: false, lastCanal: false, greeted: false, shift: 0, noGas: 0,
   };
   const ai = { dist: -START_BACK, idx: 0, lat: 0, off: 0, finish: null, side: 0 };
   let elapsed = 0, lastTime = 0, calibrated = false, calibAt = 0, viewY = -0.2, fadeV = 0, fadeTo = 0, scrape = 0, slapCool = 0, missCool = 0;
@@ -123,10 +125,10 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     spray = createSpray(scene, sky.uniforms.sunColor.value);
     confetti = createConfetti(scene);
     streaks = O.streaks ? createStreaks(holder) : null;
-    controls = createControls({ renderer, holder, rig });
+    controls = createControls({ renderer, holder, rig, options: { gain: O.steer, throttleHand: O.throttle } });
     hud = createHud({ holder, camera, font, eyeY, embedded, goal: GOAL, maxCombo: MAX_COMBO });
     hud.attach(player.ski);
-    gulls = createGulls({ scene, world, ocean, listener, onPickup, onMiss });
+    gulls = createGulls({ scene, world, ocean, sky, listener, onPickup, onMiss });
     built = true;
     resetRace();
     race.state = 'off';
@@ -161,7 +163,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     Object.assign(race, {
       state: 'ready', clock: 0, dist: d0, idx: i, finish: null, rank: 2, readyAt: elapsed, stuck: 0, lost: 0, wrong: 0,
       goalHit: false, halfHit: false, maxHit: false, moreHit: 1, hits: 0, airPeak: 0, wasRamp: false, msgUntil: 0, barkAt: elapsed - 4,
-      result: null, shown: false, lastCanal: false, greeted: false, shift: 0,
+      result: null, shown: false, lastCanal: false, greeted: false, shift: 0, noGas: 0,
     });
     race.gateNext = world.gates.findIndex((g, n) => n > 0 && g.idx * course.step > d0);
     if (race.gateNext < 0) race.gateNext = world.gates.length;
@@ -284,11 +286,13 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     const c = jane.craft, pc = player.craft;
     advance(ai, c);
     if (race.state !== 'race' && race.state !== 'done') return { throttle: 0, steer: 0 };
-    // Give the player room when side by side.
+    // Give the player room when side by side, and from further back and wider
+    // once the player has finished and sits on the line.
     const i = ai.idx, r = course.rights[i];
     const dx = pc.x - c.x, dz = pc.z - c.z;
+    const parked = race.state === 'done';
     let side = 0;
-    if (Math.hypot(dx, dz) < 9) side = (dx * r.x + dz * r.z > 0 ? -1 : 1) * Math.min(2.2, Math.max(0, course.half[i] - 4));
+    if (Math.hypot(dx, dz) < (parked ? 26 : 9)) side = (dx * r.x + dz * r.z > 0 ? -1 : 1) * Math.min(parked ? 3.2 : 2.2, Math.max(0, course.half[i] - 4));
     ai.side += (side - ai.side) * Math.min(1, dt * 1.5);
     let throttle = 1;
     c.thrustScale = 0.97;
@@ -303,17 +307,6 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
       else if (gap < -25) c.thrustScale = 1.15;
     }
     return { throttle, steer: follow(c, ai, ai.side, 2.8) };
-  }
-
-  function bump(a, b) {
-    const dx = a.x - b.x, dz = a.z - b.z, d = Math.hypot(dx, dz);
-    if (d < 2.5 && d > 0.001) {
-      const push = (2.5 - d) / 2, nx = dx / d, nz = dz / d;
-      a.x += nx * push; a.z += nz * push; b.x -= nx * push; b.z -= nz * push;
-      const rv = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz;
-      if (rv < 0) { a.vx -= rv * nx * 0.6; a.vz -= rv * nz * 0.6; b.vx += rv * nx * 0.6; b.vz += rv * nz * 0.6; return -rv; }
-    }
-    return 0;
   }
 
   const drive = { throttle: 0, steer: 0 };
@@ -332,7 +325,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     }
     pc.step(dt, drive, env);
     jc.step(dt, aiControls(dt), env);
-    const b = bump(pc, jc);
+    const b = bumpCrafts(pc, jc);
     if (b > 2) { sfx.thud(b, null); if (racing) bark(pick(['Hey! Watch my paint!', 'Bumper boats? Okay!'])); }
 
     const hit = world.collide(pc, dt);
@@ -464,8 +457,8 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     if (race.state === 'ready') {
       hud.gripHint(xr && !input.riding);
       if (now > race.msgUntil) {
-        if (xr && (input.handsSeen || input.device === 'hands')) hud.panel('GRAB THE BAR', 'Sit down, then make a fist on a grip. One hand is enough!', { size: 120 });
-        else if (xr) hud.panel('GRAB THE BAR', 'Sit down. Hands: make a fist on a grip. Controller: squeeze the trigger.', { size: 120 });
+        if (xr && (input.handsSeen || input.device === 'hands')) hud.panel('GRAB THE BAR', 'Sit down and make a fist on a grip. The right hand is the throttle.', { size: 120 });
+        else if (xr) hud.panel('GRAB THE BAR', 'Sit down. Hands: fists on the grips, the right one is the throttle. Controllers: right trigger.', { size: 120 });
         else hud.panel('PRESS SPACE', 'W or ↑ go · A / D or ← → steer', { size: 120 });
       }
       if (!race.greeted && now - race.readyAt > 1.2) { race.greeted = true; bark('Follow the gulls and grab the cash!', true); }
@@ -482,9 +475,11 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
         race.state = 'race'; race.clock = 0; race.msgUntil = now + 0.9;
         hud.panel('GO!', '', { color: COLORS.pink });
         confetti.burst(pc.x - Math.sin(pc.yaw) * 6, pc.y + 3, pc.z - Math.cos(pc.yaw) * 6, 60, 6);
-      } else hud.panel(String(n), n === 3 ? 'Turn your fist to steer' : n === 2 ? 'Ride through the bills' : 'Catch $100,000!');
+      } else hud.panel(String(n), n === 3 ? (xr ? 'Right fist is the throttle' : 'Ride through the bills') : n === 2 ? (xr ? 'Turn a fist to steer, one hand is enough' : 'Follow the gulls') : 'Catch $100,000!');
     } else if (race.state === 'race') {
       race.clock += dt;
+      // Sitting still with no throttle (holding on with the left hand only, say).
+      race.noGas = xr && input.throttle < 0.05 && pc.speed < 5 ? race.noGas + dt : 0;
     }
 
     physics(dt, input);
@@ -495,6 +490,10 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
       if (rank !== race.rank && race.clock > 3) bark(pick(rank === 1 ? ['Hey! Where did you learn that?', 'Oh no you don\'t!'] : ['See you at the finish!', 'Catch me if you can!']));
       race.rank = rank;
       if (race.wrong > 2.5) { hud.panel('WRONG WAY', 'Turn around', { color: COLORS.pink, size: 130 }); race.msgUntil = now + 0.3; }
+      else if (race.noGas > 1.5 && now > race.msgUntil) {
+        hud.panel('RIGHT HAND', input.device === 'controller' ? 'Squeeze the right trigger to go' : 'Close your right fist on the grip to go', { color: COLORS.yellow, size: 120 });
+        race.msgUntil = now + 0.3;
+      }
       else if (now > race.msgUntil) hud.panel('');
       if (!race.lastCanal && race.dist > course.cpIdx[22] * course.step) { race.lastCanal = true; bark('Last canal! Stay in the flow!', true); }
       if (race.dist >= course.length) {
