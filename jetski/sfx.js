@@ -12,7 +12,9 @@
 //   beeps, a lap bell, the finish fanfare and the waterfall's roar.
 // Recorded files can replace the synthesized ones: drop engine.mp3,
 // ocean.mp3 or splash.mp3 into jetski/audio/ and list them in sounds.json.
-const SR = 44100;
+// Buffers are generated at the audio hardware's own rate (48 kHz on Quest):
+// a ConvolverNode refuses a buffer at any other rate.
+let SR = 44100;
 
 function buffer(ctx, seconds, channels, fill) {
   const b = ctx.createBuffer(channels, Math.ceil(seconds * SR), SR);
@@ -210,6 +212,7 @@ export class Sfx {
     this.listener = listener;
     this.ctx = listener.context;
     const ctx = this.ctx;
+    SR = ctx.sampleRate;
     this.master = ctx.createGain(); this.master.connect(listener.getInput());
     this.buffers = {
       engine: makeEngineLoop(ctx),

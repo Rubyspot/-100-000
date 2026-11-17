@@ -61,6 +61,15 @@
   </div>
 </div>
 <div id="keys" hidden>W or ↑ throttle · A/D or ←/→ steer · Space start / restart</div>
+<script>
+  // Show any startup error on the card instead of hanging on "Loading…".
+  function showError(msg) {
+    var el = document.getElementById('status');
+    if (el) { el.textContent = 'Error: ' + msg; el.style.color = '#ff9a8a'; }
+  }
+  addEventListener('error', function (e) { showError(e.message || (e.error && e.error.message) || 'script failed to load'); });
+  addEventListener('unhandledrejection', function (e) { showError((e.reason && e.reason.message) || String(e.reason)); });
+</script>
 <script type="module" src="./main.js"></script>
 </body>
 </html>
