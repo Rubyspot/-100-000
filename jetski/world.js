@@ -70,8 +70,11 @@ export const RAMP_LEN = 8, RAMP_W = 6.4, RAMP_LIP = 1.9;
 export const PINK = 0xff4fa3, YELLOW = 0xffd23f, CREAM = 0xfff6e0;
 
 // ---------- mesh builder ----------
-// position + colour + kind (0 rock, 1 plain, 2 leaves, 3 sand). Normals come
-// from screen-space derivatives in the shader, so every facet is flat.
+// position + colour + kind (0 rock, 1 plain, 2 leaves, 3 sand, 4 bark).
+// Painted props take their normals from screen-space derivatives in the
+// shader, so every facet is flat. Rock and sand carry averaged normals
+// (smoothNormals), leaves a normal that points out of their clump, and bark
+// one that points out of the trunk.
 
 class Builder {
   constructor() { this.pos = []; this.col = []; this.kind = []; this.idx = []; this.nrm = []; }
@@ -111,6 +114,23 @@ class Builder {
     }
     if (g.index) { const ix = g.index.array; for (let i = 0; i < ix.length; i++) this.idx.push(base + ix[i]); }
     else for (let i = 0; i < p.count; i++) this.idx.push(base + i);
+  }
+  // Averaged normals for the given kinds: each vertex takes the normal of
+  // the faces around it, bigger faces counting for more.
+  smoothNormals(kinds) {
+    const P = this.pos, I = this.idx, N = this.nrm, K = this.kind, acc = new Float32Array(P.length);
+    for (let t = 0; t < I.length; t += 3) {
+      if (!kinds.includes(K[I[t]])) continue;
+      const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+      const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      acc[a] += nx; acc[a + 1] += ny; acc[a + 2] += nz; acc[b] += nx; acc[b + 1] += ny; acc[b + 2] += nz; acc[c] += nx; acc[c + 1] += ny; acc[c + 2] += nz;
+    }
+    for (let v = 0; v < P.length; v += 3) {
+      if (!kinds.includes(K[v / 3])) continue;
+      const l = Math.hypot(acc[v], acc[v + 1], acc[v + 2]);
+      if (l > 1e-9) { N[v] = acc[v] / l; N[v + 1] = acc[v + 1] / l; N[v + 2] = acc[v + 2] / l; }
+    }
   }
   geometry() {
     const g = new THREE.BufferGeometry();
@@ -159,81 +179,218 @@ function makeNoiseTexture() {
   return tex;
 }
 
-// Rock, sand, leaves and props, lit by the sun and sky with baked shadows.
-function makeTerrainMaterial(sky, noiseMap) {
+// Tileable rock relief, 256² (one tile is about 8 m of stone). Limestone
+// breaks into blocks along upright joints and the blocks into chips, each a
+// plane of its own tilt, so the light catches it face by face; over that,
+// rounded lumps, pits in patches and fine grain. RG: slope of that surface
+// (±SLOPE m per m), B: how much light gets in (a shade per block, dark down
+// an open joint or a pit), A: fine grain.
+const ROCK_SLOPE = 1.2;
+function makeRockTexture() {
+  const N = 256, NN = N * N, PX = 8.33 / N;
+  let s = 1234;
+  const r = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  // Smooth fields: sums of waves that wrap at the tile's edges.
+  const field = (n, kmin, kmax, pow) => {
+    const ws = Array.from({ length: n }, () => {
+      let kx = 0, ky = 0;
+      while (Math.hypot(kx, ky) < kmin) { kx = Math.round((r() - 0.5) * 2 * kmax); ky = Math.round((r() - 0.5) * 2 * kmax); }
+      return { kx, ky, ph: r() * 6.2831853, a: 1 / Math.pow(Math.hypot(kx, ky), pow) };
+    });
+    const f = new Float32Array(NN);
+    let max = 0;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      let v = 0;
+      for (const w of ws) v += Math.cos(((w.kx * x + w.ky * y) / N) * 6.2831853 + w.ph) * w.a;
+      f[y * N + x] = v; if (Math.abs(v) > max) max = Math.abs(v);
+    }
+    for (let i = 0; i < NN; i++) f[i] /= max;
+    return f;
+  };
+  const lumps = field(16, 2, 8, 1.0), patch = field(10, 1, 4, 0.8), grain = field(22, 28, 64, 0.3);
+  // Blocks and chips: cells on a jittered grid, taller than wide.
+  const cells = (nx, ny, tilt) => {
+    const cw = N / nx, ch = N / ny, pts = [];
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const a = r() * Math.PI * 2, m = tilt * (0.3 + 0.7 * r());
+      pts.push({ x: (i + 0.15 + 0.7 * r()) * cw, y: (j + 0.15 + 0.7 * r()) * ch, sx: Math.cos(a) * m, sy: Math.sin(a) * m, shade: r(), open: r() });
+    }
+    return { nx, ny, cw, ch, pts };
+  };
+  const blocks = cells(7, 4, 0.5), chips = cells(20, 12, 0.32);
+  const near = { a: null, b: null, edge: 0, across: 0 };
+  const nearest = (C, x, y) => {
+    const ci = Math.floor(x / C.cw), cj = Math.floor(y / C.ch);
+    let d1 = Infinity, d2 = Infinity, a = null, b = null, ax = 0, ay = 0, bx = 0, by = 0;
+    for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
+      const ii = ci + di, jj = cj + dj;
+      const p = C.pts[(((jj % C.ny) + C.ny) % C.ny) * C.nx + (((ii % C.nx) + C.nx) % C.nx)];
+      const px = p.x + Math.floor(ii / C.nx) * N, py = p.y + Math.floor(jj / C.ny) * N;
+      const d = (px - x) * (px - x) + (py - y) * (py - y);
+      if (d < d1) { d2 = d1; b = a; bx = ax; by = ay; d1 = d; a = p; ax = px; ay = py; }
+      else if (d < d2) { d2 = d; b = p; bx = px; by = py; }
+    }
+    const L = Math.hypot(bx - ax, by - ay) || 1;
+    near.a = a; near.b = b; near.edge = (d2 - d1) / (2 * L); near.across = Math.abs(bx - ax) / L;
+    return near;
+  };
+  // Pits, many small and a few big, where the patch field says so.
+  const pit = new Float32Array(NN);
+  for (let n = 0; n < 1100; n++) {
+    const x = r() * N, y = r() * N;
+    if (r() > smooth((patch[(Math.floor(y) % N) * N + (Math.floor(x) % N)] - 0.05) / 0.5)) continue;
+    const rad = 0.8 + 3.6 * Math.pow(r(), 2.4), depth = rad * PX * 0.45, R = Math.ceil(rad);
+    for (let j = -R; j <= R; j++) for (let i = -R; i <= R; i++) {
+      const q = 1 - ((i + 0.5 - (x % 1)) ** 2 + (j + 0.5 - (y % 1)) ** 2) / (rad * rad);
+      if (q <= 0) continue;
+      const k = ((((Math.floor(y) + j) % N) + N) % N) * N + ((((Math.floor(x) + i) % N) + N) % N);
+      pit[k] = Math.max(pit[k], depth * Math.sqrt(q));
+    }
+  }
+  // Smooth part of the surface, in metres.
+  const h = new Float32Array(NN);
+  for (let i = 0; i < NN; i++) h[i] = lumps[i] * 0.1 + grain[i] * 0.004 - pit[i];
+  const data = new Uint8Array(NN * 4);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = y * N + x;
+    let gx = (h[y * N + (x + 1) % N] - h[y * N + (x + N - 1) % N]) / (2 * PX);
+    let gy = (h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x]) / (2 * PX);
+    const B = nearest(blocks, x + 0.5, y + 0.5);
+    gx += B.a.sx; gy += B.a.sy;
+    let light = 0.86 + 0.14 * B.a.shade;
+    // Some joints between blocks side by side stand open: a dark crack
+    // running down the rock.
+    if (B.across > 0.75 && (B.a.open + B.b.open) % 1 < 0.45) light *= 1 - 0.7 * Math.exp(-((B.edge / 1.2) ** 2));
+    const Cc = nearest(chips, x + 0.5, y + 0.5);
+    gx += Cc.a.sx; gy += Cc.a.sy;
+    light *= 0.94 + 0.06 * Cc.a.shade;
+    light *= 1 - 0.38 * Math.min(1, pit[i] / (PX * 1.5));
+    data[i * 4] = Math.round(clamp(gx / ROCK_SLOPE, -1, 1) * 127 + 128);
+    data[i * 4 + 1] = Math.round(clamp(gy / ROCK_SLOPE, -1, 1) * 127 + 128);
+    data[i * 4 + 2] = Math.round(clamp(light, 0, 1) * 255);
+    data[i * 4 + 3] = Math.round((grain[i] * 0.5 + 0.5) * 255);
+  }
+  const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true; tex.anisotropy = 4; tex.needsUpdate = true;
+  return tex;
+}
+
+// Rock, sand, leaves, bark and props, lit by the sun and sky with baked shadows.
+// `like` makes the variant for the mesh that holds the plants: the same
+// uniforms, plus the ragged outline of the leaf clumps (kept out of the rock's
+// shader, where a discard would cost the whole landscape its early depth test).
+function makeTerrainMaterial(sky, noiseMap, like = null) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...sky.uniforms, noiseMap: { value: noiseMap }, camPos: { value: new THREE.Vector3() } },
+    defines: like ? { CUT_LEAVES: 1 } : {},
+    uniforms: like ? like.uniforms : { ...sky.uniforms, noiseMap: { value: noiseMap }, rockMap: { value: makeRockTexture() }, camPos: { value: new THREE.Vector3() } },
     vertexShader: /* glsl */`
       attribute vec3 color; attribute vec3 bake;
       varying vec3 vWorld; varying vec3 vColor; varying vec3 vBake; varying vec3 vRound;
       void main() {
         vec4 w = modelMatrix * vec4(position, 1.0);
-        vWorld = w.xyz; vColor = color; vBake = bake; vRound = normal;
+        vWorld = w.xyz; vColor = color; vBake = bake; vRound = mat3(modelMatrix) * normal;
         gl_Position = projectionMatrix * viewMatrix * w;
       }`,
     fragmentShader: SKY_SAMPLE_GLSL + /* glsl */`
-      uniform sampler2D noiseMap; uniform vec3 camPos;
+      #define ROCK_SLOPE ${ROCK_SLOPE.toFixed(2)}
+      uniform sampler2D noiseMap; uniform sampler2D rockMap; uniform vec3 camPos;
       uniform vec3 sunLight; uniform vec3 skyLight; uniform vec3 bounceLight;
       varying vec3 vWorld; varying vec3 vColor; varying vec3 vBake; varying vec3 vRound;
       void main() {
-        vec3 N = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        vec3 Nf = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        vec3 Nv = normalize(vRound);
         float kind = vBake.z;
         float isRock = 1.0 - step(0.5, kind);
+        float isPlain = step(0.5, kind) * (1.0 - step(1.5, kind));
         float isLeaf = step(1.5, kind) * (1.0 - step(2.5, kind));
-        float isSand = step(2.5, kind);
-        vec3 w = abs(N); w /= (w.x + w.y + w.z);
-        vec4 n = texture2D(noiseMap, vWorld.zy * 0.11) * w.x + texture2D(noiseMap, vWorld.xz * 0.11) * w.y + texture2D(noiseMap, vWorld.xy * 0.11) * w.z;
-        vec4 big = texture2D(noiseMap, vWorld.xz * 0.013 + vWorld.y * 0.017);
-        // Rough rock: the noise leans the facets this way and that.
-        N = normalize(N + (vec3(n.r, n.g, n.a) - 0.5) * 0.7 * isRock + (vec3(big.g, 0.5, big.b) - 0.5) * 0.5 * isRock);
+        float isSand = step(2.5, kind) * (1.0 - step(3.5, kind));
+        float isBark = step(3.5, kind);
+        // Rock is a smooth shape that keeps some of each facet's own slant,
+        // so the stone still breaks along planes; sand, bark and leaf
+        // clumps are smooth.
+        vec3 N = normalize(mix(Nf, Nv, 0.6 * isRock + isSand + isBark + isLeaf));
+        vec3 Nbase = N;
 
-        // Limestone: warm and cool patches, thin strata, dark rain streaks on
-        // the steep faces, plants on every ledge, and a wet band with a pale
-        // tide line at the water.
-        vec3 rock = vColor * mix(vec3(0.88, 0.90, 0.94), vec3(1.12, 1.03, 0.90), big.r);
-        rock *= 0.95 + 0.06 * sin(vWorld.y * 1.7 + n.g * 4.0 + big.g * 7.0);
-        rock *= 0.84 + 0.30 * n.a;
-        float steep = 1.0 - smoothstep(0.35, 0.8, N.y);
+        // The relief texture, laid on from the three sides and blended.
+        vec3 w = N * N; w *= w; w /= (w.x + w.y + w.z);
+        vec4 tx = texture2D(rockMap, vWorld.zy * 0.12), ty = texture2D(rockMap, vWorld.xz * 0.12), tz = texture2D(rockMap, vWorld.xy * 0.12);
+        vec4 n = tx * w.x + ty * w.y + tz * w.z;   // b: light reaching in, a: grain
+        vec3 bump = vec3(0.0, tx.g - 0.5, tx.r - 0.5) * w.x + vec3(ty.r - 0.5, 0.0, ty.g - 0.5) * w.y + vec3(tz.r - 0.5, tz.g - 0.5, 0.0) * w.z;
+        vec4 big = texture2D(noiseMap, vWorld.xz * 0.013 + vWorld.y * 0.017);
+        float steep = 1.0 - smoothstep(0.35, 0.8, Nbase.y);
+        // How broken the stone is here: it changes over tens of metres, so
+        // the relief never repeats the same way twice.
+        float rough = 0.55 + 0.45 * smoothstep(0.3, 0.7, big.g);
+
+        // Limestone: broken faces, here and there a bed a couple of metres
+        // thick with a ledge under it, open joints and pits dark inside;
+        // rain leaves dark streaks down the steep faces and rust stains
+        // here and there; plants take every ledge; and at the water there
+        // is a wet band with a pale tide line.
+        float sy = vWorld.y * 0.42 + big.r * 2.0 + dot(vWorld.xz, vec2(0.019, 0.013));
+        float bed = fract(sy);
+        float lower = smoothstep(0.95, 1.0, bed), upper = 1.0 - smoothstep(0.0, 0.05, bed);
+        float beds = steep * smoothstep(0.45, 0.7, big.b) * smoothstep(0.35, 0.6, n.a) * isRock;
+        N = normalize(N - bump * (2.0 * ROCK_SLOPE) * rough * isRock + vec3(0.0, (lower - upper) * 0.6 * beds, 0.0));
+
+        vec3 rock = vColor * mix(vec3(0.86, 0.89, 0.95), vec3(1.12, 1.03, 0.90), big.r);
+        rock *= 1.0 + (fract(sin(floor(sy) * 12.9898) * 43758.5453) - 0.5) * 0.14 * steep;
+        rock *= 1.0 - 0.3 * (lower + upper) * beds;
+        rock *= mix(1.0, 0.3 + 0.7 * n.b, rough) * (0.9 + 0.2 * n.a);
         float streak = texture2D(noiseMap, vec2(dot(vWorld.xz, vec2(0.7, 0.71)) * 0.075, vWorld.y * 0.011)).b;
-        rock *= mix(1.0, 0.68 + 0.36 * streak, steep * (0.35 + 0.65 * big.g));
-        // Rusty stains here and there.
-        rock = mix(rock, rock * vec3(1.10, 0.90, 0.70), smoothstep(0.62, 0.9, big.b) * 0.5);
-        float veg = smoothstep(0.45, 0.75, N.y + (n.r - 0.5) * 0.6) * smoothstep(2.4, 5.0, vWorld.y);
-        veg = max(veg, smoothstep(0.55, 0.8, big.r * 0.6 + n.r * 0.7) * smoothstep(5.0, 10.0, vWorld.y) * 0.5 * (1.0 - steep * 0.5));
-        rock = mix(rock, vec3(0.085, 0.19, 0.05) * (0.6 + 0.8 * n.g), veg);
+        rock *= mix(1.0, 0.52 + 0.55 * streak, steep * (0.35 + 0.65 * big.g));
+        rock = mix(rock, rock * vec3(1.14, 0.88, 0.64), smoothstep(0.62, 0.9, big.b) * 0.55);
+        float veg = smoothstep(0.45, 0.75, Nbase.y + (n.a - 0.5) * 0.5) * smoothstep(2.4, 5.0, vWorld.y);
+        veg = max(veg, smoothstep(0.55, 0.8, big.r * 0.6 + n.a * 0.7) * smoothstep(5.0, 10.0, vWorld.y) * 0.5 * (1.0 - steep * 0.5));
+        rock = mix(rock, vec3(0.085, 0.19, 0.05) * (0.5 + 0.9 * n.b), veg);
         float wet = 1.0 - smoothstep(0.2, 1.0, vWorld.y + (n.a - 0.5) * 0.5);
         rock = mix(rock, rock * vec3(0.36, 0.37, 0.36), wet);
-        float tide = exp(-pow((vWorld.y - 1.15 - (n.r - 0.5) * 0.4) / 0.2, 2.0));
+        float tide = exp(-pow((vWorld.y - 1.15 - (big.g - 0.5) * 0.4) / 0.2, 2.0));
         rock = mix(rock, vec3(0.80, 0.77, 0.66), tide * 0.35 * steep);
 
-        vec3 sand = vColor * (0.9 + 0.2 * n.a) * (0.96 + 0.08 * sin(vWorld.x * 2.1 + n.r * 6.0));
-        sand = mix(sand, sand * vec3(0.72, 0.70, 0.64), 1.0 - smoothstep(0.1, 0.5, vWorld.y + (n.g - 0.5) * 0.2));
-        // Leaf clusters, looked up in the plane each facet lies closest to,
-        // so the pattern never smears down a steep side.
-        vec3 aN = abs(N);
-        vec2 lp = aN.y > max(aN.x, aN.z) ? vWorld.xz : (aN.x > aN.z ? vWorld.zy : vWorld.xy);
-        vec4 cl = texture2D(noiseMap, lp * 0.31 + 0.37);
+        vec3 sand = vColor * (0.9 + 0.2 * n.a) * (0.96 + 0.08 * sin(vWorld.x * 2.1 + big.r * 6.0));
+        sand = mix(sand, sand * vec3(0.72, 0.70, 0.64), 1.0 - smoothstep(0.1, 0.5, vWorld.y + (n.a - 0.5) * 0.2));
+        // Bark: ring scars up the trunk.
+        float ring = smoothstep(0.0, 0.35, abs(fract(vWorld.y * 2.6 + n.a * 0.3) - 0.5) * 2.0);
+        vec3 bark = vColor * (0.55 + 0.45 * ring) * (0.8 + 0.4 * n.a);
+        // Leaf clusters (only the plants' mesh has leaves), laid on from
+        // the three sides of the clump's round shape.
+        #ifdef CUT_LEAVES
+        vec3 lw = Nv * Nv; lw *= lw; lw /= (lw.x + lw.y + lw.z);
+        vec4 cl = texture2D(noiseMap, vWorld.zy * 0.31 + 0.37) * lw.x + texture2D(noiseMap, vWorld.xz * 0.31 + 0.37) * lw.y + texture2D(noiseMap, vWorld.xy * 0.31 + 0.37) * lw.z;
+        // A clump's outline is ragged: toward its edge the gaps between the
+        // leaves show what is behind.
+        if (isLeaf > 0.5 && cl.r * 0.45 + cl.g * 0.35 + cl.a * 0.2 > 0.12 + abs(dot(Nv, normalize(camPos - vWorld))) * 1.15) discard;
+        #else
+        vec4 cl = vec4(0.5);
+        #endif
         float clump = cl.g;
         vec3 leaf = vColor * mix(vec3(0.42, 0.55, 0.40), vec3(1.05, 1.12, 0.72), clump) * (0.55 + 0.8 * n.a);
         // Shadowed gaps between the clusters.
         leaf *= mix(0.56, 1.1, smoothstep(0.28, 0.62, cl.g * 0.65 + cl.a * 0.35));
-        vec3 plain = vColor;
-        vec3 albedo = plain;
+        vec3 albedo = vColor;
         albedo = mix(albedo, rock, isRock);
         albedo = mix(albedo, leaf, isLeaf);
         albedo = mix(albedo, sand, isSand);
+        albedo = mix(albedo, bark, isBark);
 
-        float isPlain = step(0.5, kind) * (1.0 - step(1.5, kind));
         float ndl = max(dot(N, sunDir), 0.0);
         // Leaves: a round clump whose clusters catch the light this way and
         // that, hardly a facet. Painted props: soft, like inflatables.
-        vec3 Nl = normalize(normalize(vRound) + vec3(0.0, 0.3, 0.0) + N * 0.1 + (vec3(cl.r, cl.a, cl.g) - 0.5) * 0.85);
+        vec3 Nl = normalize(Nv + vec3(0.0, 0.3, 0.0) + (vec3(cl.r, cl.a, cl.g) - 0.5) * 1.1);
         float ndlLeaf = max(dot(Nl, sunDir), 0.0) * 0.8 + 0.2;
         ndl = mix(ndl, ndlLeaf, isLeaf);
-        ndl = mix(ndl, max(dot(N, sunDir) * 0.6 + 0.4, 0.0), isPlain);
+        ndl = mix(ndl, max(dot(Nf, sunDir) * 0.6 + 0.4, 0.0), isPlain);
         vec3 light = sunLight * ndl * vBake.x
           + skyLight * (0.6 + 0.4 * N.y) * vBake.y
           + bounceLight * (0.5 - 0.5 * N.y) * (0.35 + 0.65 * vBake.x);
+        // Light thrown back into the shade by the sunlit rock and water. It
+        // comes from the side away from the sun, so the broken faces of a
+        // wall in shade still show.
+        float fill = max(dot(N, normalize(vec3(-sunDir.x, 0.35, -sunDir.z))), 0.0);
+        light += vec3(0.19, 0.18, 0.16) * (1.0 - vBake.x) * (0.55 + 0.45 * vBake.y) * mix(1.0, 0.25 + 1.2 * fill, isRock) * (1.0 - isPlain);
         // Turquoise light off the water on the lower rock.
         light += vec3(0.04, 0.15, 0.14) * exp(-max(vWorld.y, 0.0) / 5.0) * (0.8 - 0.5 * N.y) * vBake.y * (1.0 - isPlain);
         // Paint keeps its colour: a flatter light, never blown out.
@@ -247,27 +404,77 @@ function makeTerrainMaterial(sky, noiseMap) {
   });
 }
 
+// One palm frond, base at the top: a bare stalk, then thin leaflets that
+// slant toward the tip, long in the middle and short at the end, with gaps
+// between them.
 function makeFrondTexture() {
-  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 512;
+  const W = 256, H = 512;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  for (let i = 0; i < 46; i++) {
-    const v = 16 + i * 10.4;
-    const len = 60 * Math.sin(Math.min(1, (i + 4) / 48) * Math.PI * 0.9 + 0.14);
-    for (const s of [-1, 1]) {
+  let s = 77;
+  const r = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  const COUNT = 54;
+  for (let i = 0; i < COUNT; i++) {
+    const f = i / (COUNT - 1), y = 50 + f * 438;
+    const len = 122 * Math.pow(Math.sin(Math.min(1, f * 0.9 + 0.08) * Math.PI), 0.55) * (0.86 + 0.14 * r());
+    for (const side of [-1, 1]) {
+      const l = len * (0.92 + 0.08 * r()), fall = l * (0.42 + 0.1 * r());
+      const hue = 82 + r() * 26, light = 20 + r() * 13;
+      const grad = g.createLinearGradient(W / 2, y, W / 2 + side * l, y + fall);
+      grad.addColorStop(0, `hsl(${hue}, 58%, ${light * 0.8}%)`); grad.addColorStop(0.6, `hsl(${hue}, 60%, ${light}%)`); grad.addColorStop(1, `hsl(${hue - 14}, 62%, ${light + 9}%)`);
+      g.fillStyle = grad;
       g.beginPath();
-      g.moveTo(64, v);
-      g.lineTo(64 + s * len, v + 24 + len * 0.3);
-      g.lineTo(64 + s * len * 0.9, v + 33 + len * 0.3);
-      g.lineTo(64, v + 9.5);
-      g.closePath();
-      g.fillStyle = `rgb(${52 + (i * 13) % 36}, ${118 + (i * 37) % 50}, ${30 + (i * 7) % 22})`;
-      g.fill();
+      g.moveTo(W / 2, y - 3.6);
+      g.quadraticCurveTo(W / 2 + side * l * 0.55, y + fall * 0.42 - 3.0, W / 2 + side * l, y + fall);
+      g.quadraticCurveTo(W / 2 + side * l * 0.5, y + fall * 0.5 + 3.4, W / 2, y + 4.4);
+      g.closePath(); g.fill();
     }
   }
-  g.strokeStyle = '#93a548'; g.lineWidth = 5; g.beginPath(); g.moveTo(64, 0); g.lineTo(64, 500); g.stroke();
+  // The stalk and midrib, thick at the base.
+  const rib = g.createLinearGradient(0, 0, 0, H);
+  rib.addColorStop(0, '#8f8a4a'); rib.addColorStop(0.3, '#a3ad55'); rib.addColorStop(1, '#8fae4c');
+  g.fillStyle = rib;
+  g.beginPath(); g.moveTo(W / 2 - 7, 0); g.lineTo(W / 2 + 7, 0); g.lineTo(W / 2 + 1.5, H - 14); g.lineTo(W / 2 - 1.5, H - 14); g.closePath(); g.fill();
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return t;
+}
+
+// Fronds: leaves that let the sun through (lit from behind they glow
+// yellow-green), in the same light and haze as the rest of the world.
+function makeFrondMaterial(sky, camPos) {
+  return new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    uniforms: { ...sky.uniforms, map: { value: makeFrondTexture() }, camPos },
+    vertexShader: /* glsl */`
+      attribute vec3 color;
+      varying vec2 vUv; varying vec3 vWorld; varying vec3 vN; varying vec3 vTint;
+      void main() {
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        vUv = uv; vTint = color; vN = mat3(modelMatrix) * normal; vWorld = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: SKY_SAMPLE_GLSL + /* glsl */`
+      uniform sampler2D map; uniform vec3 camPos;
+      uniform vec3 sunLight; uniform vec3 skyLight; uniform vec3 bounceLight;
+      varying vec2 vUv; varying vec3 vWorld; varying vec3 vN; varying vec3 vTint;
+      void main() {
+        vec4 t = texture2D(map, vUv);
+        if (t.a < 0.3) discard;
+        vec3 N = normalize(vN);
+        if (!gl_FrontFacing) N = -N;
+        float ndl = dot(N, sunDir);
+        vec3 light = sunLight * (max(ndl, 0.0) * 0.85 + 0.08)
+          + sunLight * vec3(0.85, 1.0, 0.30) * max(-ndl, 0.0) * 0.6
+          + skyLight * (0.6 + 0.4 * N.y)
+          + bounceLight * (0.5 - 0.5 * N.y);
+        vec3 col = t.rgb * vTint * light;
+        col = applyHaze(col, length(camPos - vWorld));
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
 }
 
 function makeBannerTexture(lines, bg, fg, font) {
@@ -404,7 +611,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   const deco = new Builder();      // arches of rock, leaves, trunks, props: lit only
   const leafSpots = [];            // [x, y, z, size] where bushes grow
   const palmSpots = [];            // [x, y, z, lean direction, size]
-  const rockA = C(0x8d8a82), rockB = C(0xa39a86), rockTop = C(0x6f7f4a);
+  const rockA = C(0xa9a59b), rockB = C(0xc7bca4), rockTop = C(0x6f7f4a);
   const sandA = C(0xf3e2b8), sandB = C(0xe9d3a0);
   const tmpC = new THREE.Color();
   const rockColor = (x, y, z) => tmpC.copy(rockA).lerp(rockB, fbm3(x * 0.05, y * 0.08, z * 0.05, 2));
@@ -481,9 +688,12 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   // A limestone tower: undercut at the waterline, steep sides, green crown.
   function addStack(x, z, r, h, { segs = 0, squash = 1, leaves = 0.26 } = {}) {
     const SEG = segs || Math.max(20, Math.min(64, Math.round(r * 2.1)));
+    // Karst: undercut where the sea eats it, near-vertical sides almost to
+    // the top, then a rounded crown.
     const prof = [ // [height (m below 3.2, fraction of h above), radius factor]
       [-4, 1.14], [-0.4, 1.03], [0.75, 1.01], [1.9, 1.09], [3.2, 1.07],
-      [0.16, 1.1], [0.3, 1.12], [0.44, 1.08], [0.58, 1.0], [0.7, 0.9], [0.8, 0.76], [0.88, 0.6], [0.94, 0.42], [0.98, 0.22], [1.0, 0.0],
+      [0.13, 1.10], [0.22, 1.12], [0.32, 1.10], [0.42, 1.08], [0.52, 1.05], [0.62, 1.02], [0.71, 0.97], [0.79, 0.90],
+      [0.86, 0.79], [0.91, 0.64], [0.95, 0.46], [0.98, 0.25], [1.0, 0.0],
     ];
     const ROWS = prof.length, base = land.count, ph = rnd() * 50;
     for (let k = 0; k < SEG; k++) {
@@ -494,7 +704,10 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
         const rr = r * prof[j][1] * lobe;
         let px = x + cs * rr, pz = z + sn * rr, y = j < 5 ? prof[j][0] : Math.max(3.4, prof[j][0] * h);
         if (j >= 2 && j < ROWS - 1) {
-          const d = (fbm3(px * 0.09 + ph, y * 0.09, pz * 0.09, 3) - 0.5) * Math.min(4.5, r * 0.36) + (j >= 5 ? (noise2(k * 0.9 + ph, y * 0.05) - 0.5) * Math.min(1.8, r * 0.12) : 0);
+          // Big bulges, vertical ribs, and (above the water) a break at
+          // every point, so the faces are split like weathered stone.
+          const d = (fbm3(px * 0.09 + ph, y * 0.09, pz * 0.09, 3) - 0.5) * Math.min(4.5, r * 0.36)
+            + (j >= 5 ? (noise2(k * 0.9 + ph, y * 0.05) - 0.5) * Math.min(2.4, r * 0.16) + (h3(k, j, 17) - 0.5) * Math.min(1.3, r * 0.09) : 0);
           const dd = j <= 4 ? Math.max(0, d) * 0.5 : d;
           px += cs * dd; pz += sn * dd;
           if (j >= 5) y += (noise3(px * 0.2, y * 0.2, pz * 0.2) - 0.5) * Math.min(2.0, h * 0.06);
@@ -503,7 +716,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
         if (j >= ROWS - 6) col.lerp(rockTop, 0.5);
         land.vert(px, y, pz, col, 0);
         if (j >= ROWS - 6 && j < ROWS - 1 && rnd() < leaves) leafSpots.push([px, y, pz, Math.min(4.2, 1.4 + r * 0.07 + rnd() * 1.8)]);
-        if (j >= 6 && j < ROWS - 6 && rnd() < leaves * 0.15) leafSpots.push([px, y, pz, 1.2 + rnd()]);
+        if (j >= 6 && j < ROWS - 6 && rnd() < leaves * 0.11) leafSpots.push([px, y, pz, 1.2 + rnd()]);
       }
     }
     land.grid(base, ROWS, SEG, true);
@@ -712,7 +925,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   const sunH = Math.hypot(SUN_DIR.x, SUN_DIR.z), sunTan = SUN_DIR.y / sunH, sdx = SUN_DIR.x / sunH, sdz = SUN_DIR.z / sunH;
   function sunAt(x, y, z, start) {
     let vis = 1;
-    for (let d = start; d < 62; d += d < 12 ? 1 : 2) {
+    for (let d = start; d < 110; d += d < 12 ? 1 : d < 60 ? 2 : 3) {
       const ry = y + d * sunTan;
       if (ry > 72) break;
       const over = heightAt(x + sdx * d, z + sdz * d) - ry;
@@ -769,7 +982,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
     for (let z = 0; z < SN; z++) for (let x = 0; x < SN; x++) {
       const wx = G0 + x * 2 + 1, wz = G0 + z * 2 + 1, i = z * SN + x;
       const d = toLand[(z * 2 + 1) * GN + x * 2 + 1];
-      if (d <= 0 || d > 50) { if (d <= 0) { skyW[i] = 0.6; sunW[i] = 0.3; } continue; }
+      if (d <= 0 || d > 100) { if (d <= 0) { skyW[i] = 0.6; sunW[i] = 0.3; } continue; }
       sunW[i] = sunAt(wx, 0.1, wz, 1);
       skyW[i] = 1 - skyAt(wx, 0.2, wz, [3, 6, 12, 20, 32]);
     }
@@ -839,22 +1052,24 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
 
   // ---------- plants ----------
 
-  // Bushes: squashed, lumpy icosahedra in a few greens. The 60 face corners
-  // of an icosahedron share 12 points; each point gets one jitter, so a bush
-  // stays a closed clump instead of breaking into shards.
+  // Bushes: squashed, lumpy icosahedra in a few greens, the bigger ones
+  // subdivided once so their outline is a lumpy clump rather than a
+  // polygon. The face corners of an icosahedron share its points (12, or
+  // 42 subdivided); each point gets one jitter, so a bush stays a closed
+  // clump instead of breaking into shards.
   {
-    const ico = new THREE.IcosahedronGeometry(1, 0);
-    const icoPoint = [], icoFirst = [];
-    {
+    const shapes = [0, 1].map((detail) => {
+      const ico = new THREE.IcosahedronGeometry(1, detail);
+      const point = [], first = [];
       const seen = [], q = ico.attributes.position, v = new THREE.Vector3();
       for (let i = 0; i < q.count; i++) {
         v.fromBufferAttribute(q, i);
         let k = seen.findIndex((o) => o.distanceToSquared(v) < 1e-6);
-        if (k < 0) { k = seen.length; seen.push(v.clone()); icoFirst.push(i); }
-        icoPoint.push(k);
+        if (k < 0) { k = seen.length; seen.push(v.clone()); first.push(i); }
+        point.push(k);
       }
-    }
-    const jitter = new Float32Array(ico.attributes.position.count);
+      return { ico, point, jitter: new Float32Array(seen.length) };
+    });
     const greens = [C(0x2a5f20), C(0x357a28), C(0x4a8a2e), C(0x23501f), C(0x5a8f33)];
     const hill = lagoonIsle;
     // The lagoon island's jungle, between the beach and the rock.
@@ -866,27 +1081,33 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
     for (const [x, y, z, s] of leafSpots) {
       const g = greens[Math.floor(rnd() * greens.length)];
       const m = M4(x, y + s * 0.25, z, rnd() * 6, s * (0.9 + rnd() * 0.5), s * (0.6 + rnd() * 0.3), s * (0.9 + rnd() * 0.5), rnd() * 0.5, rnd() * 0.5);
-      for (let i = 0; i < jitter.length; i++) jitter[i] = 0.76 + 0.5 * rnd();
-      deco.add(ico, m, g, 2, (v, c, i) => { v.multiplyScalar(jitter[icoFirst[icoPoint[i]]]); c.multiplyScalar(0.75 + 0.5 * (v.y * 0.5 + 0.5)); });
+      const sh = shapes[s >= 2.4 ? 1 : 0];
+      for (let i = 0; i < sh.jitter.length; i++) sh.jitter[i] = 0.72 + 0.56 * rnd();
+      deco.add(sh.ico, m, g, 2, (v, c, i) => { v.multiplyScalar(sh.jitter[sh.point[i]]); c.multiplyScalar(0.75 + 0.5 * (v.y * 0.5 + 0.5)); });
     }
   }
 
-  // Palms: a curved trunk and a crown of drooping fronds.
+  // Palms: a curved trunk with ring scars, swollen at the foot; a crown of
+  // arching fronds, each folded along its midrib so the leaflets hang (young
+  // ones stand up in the middle, old ones hang down); a few coconuts.
   const fronds = { pos: [], uv: [], col: [], idx: [] };
   {
-    const trunkA = C(0x8a6d4c), trunkB = C(0x6e5438);
+    const trunkA = C(0xa08a6c), trunkB = C(0x7d6950), nut = C(0x4c5a26);
+    const nutGeo = new THREE.IcosahedronGeometry(1, 0), tone = new THREE.Color();
     for (const [x, y0, z, dir, s] of palmSpots) {
-      const hgt = (7 + rnd() * 4) * s, lean = (0.8 + rnd() * 1.8) * s, ldx = Math.cos(dir), ldz = Math.sin(dir);
+      const hgt = (7.5 + rnd() * 5) * s, lean = (1.0 + rnd() * 2.6) * s, ldx = Math.cos(dir), ldz = Math.sin(dir);
       const y = Math.max(0.6, heightAt(x, z) - 0.2, y0 - 0.6);
-      const RINGS = 7, SIDES = 6, base = deco.count;
+      const RINGS = 9, SIDES = 7, base = deco.count;
       let tx = x, ty = y + hgt, tz = z;
+      tone.copy(trunkA).lerp(trunkB, rnd());
       for (let j = 0; j < RINGS; j++) {
-        const f = j / (RINGS - 1), rad = (0.3 - 0.12 * f) * s;
-        const cx = x + ldx * lean * f * f, cz = z + ldz * lean * f * f, cy = y + hgt * f;
+        const f = j / (RINGS - 1);
+        const rad = (0.2 + 0.17 * Math.exp(-f * 9) - 0.055 * f + 0.05 * smooth((f - 0.86) / 0.14)) * s;
+        const cx = x + ldx * lean * f * f, cz = z + ldz * lean * f * f, cy = y - 0.3 + (hgt + 0.3) * f;
         if (j === RINGS - 1) { tx = cx; ty = cy; tz = cz; }
         for (let k = 0; k < SIDES; k++) {
           const a = (k / SIDES) * Math.PI * 2;
-          deco.vert(cx + Math.cos(a) * rad, cy, cz + Math.sin(a) * rad, tmpC.copy(j % 2 ? trunkA : trunkB), 1);
+          deco.vert(cx + Math.cos(a) * rad, cy, cz + Math.sin(a) * rad, tone, 4, Math.cos(a), 0.15, Math.sin(a));
         }
       }
       // Rings were emitted row by row here: columns are rings going up.
@@ -894,19 +1115,38 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
         const a = base + j * SIDES + k, b = base + (j + 1) * SIDES + k, c = base + j * SIDES + (k + 1) % SIDES, d = base + (j + 1) * SIDES + (k + 1) % SIDES;
         deco.idx.push(a, b, c, b, d, c);
       }
-      const N = 11;
-      for (let i = 0; i < N; i++) {
-        const az = (i / N) * Math.PI * 2 + rnd() * 0.4, up = i % 3 === 0 ? 0.95 : 0.35 + rnd() * 0.3;
-        const len = (3.6 + rnd() * 1.4) * s * (i % 3 === 0 ? 0.75 : 1), wid = 1.25 * s, SEGS = 5;
-        const b0 = fronds.pos.length / 3, tint = 0.75 + rnd() * 0.4;
+      for (let i = 0; i < 3; i++) {
+        const a = rnd() * 6.28, rr = 0.3 * s;
+        deco.add(nutGeo, M4(tx + Math.cos(a) * rr, ty - 0.28 * s, tz + Math.sin(a) * rr, rnd() * 3, 0.19 * s, 0.23 * s, 0.19 * s), nut, 1);
+      }
+      // Four young fronds standing in the middle, eight around them, three
+      // old ones hanging: each tier spread evenly round the crown.
+      const SEGS = 6, plan = [];
+      for (const [tier, count] of [[0, 4], [1, 8], [2, 3]]) {
+        const a0 = rnd() * 6.28;
+        for (let k = 0; k < count; k++) plan.push([tier, a0 + (k / count) * Math.PI * 2 + (rnd() - 0.5) * 0.5]);
+      }
+      for (const [tier, az] of plan) {
+        // Which way it leaves the crown, and how far it arches over.
+        const up = tier === 0 ? 1.0 + rnd() * 0.3 : tier === 1 ? 0.25 + rnd() * 0.45 : -0.25 - rnd() * 0.3;
+        const bend = tier === 0 ? 1.0 + rnd() * 0.4 : tier === 1 ? 1.15 + rnd() * 0.45 : 0.9 + rnd() * 0.3;
+        const len = (4.4 + rnd() * 1.6) * s * (tier === 0 ? 0.8 : 1), wid = (1.5 + rnd() * 0.3) * s;
+        const b0 = fronds.pos.length / 3;
+        const tint = (tier === 2 ? 0.7 : 0.85) + rnd() * 0.3, warm = tier === 2 ? 1.12 : 1;
         const dx = Math.cos(az), dz = Math.sin(az), sx = -dz, sz = dx;
+        let out = 0.12 * s, rise = 0;
         for (let k = 0; k <= SEGS; k++) {
-          const f = k / SEGS, out = len * f * Math.cos(up) * (1 - 0.12 * f), rise = len * (f * Math.sin(up) - f * f * (0.55 + 0.35 * (1 - up)));
-          const px = tx + dx * out, py = ty + rise, pz = tz + dz * out, w = wid * 0.5 * (0.55 + 0.45 * Math.sin(f * Math.PI));
-          fronds.pos.push(px - sx * w, py - 0.12 * w, pz - sz * w, px + sx * w, py - 0.12 * w, pz + sz * w);
-          fronds.uv.push(0, 1 - f, 1, 1 - f);
-          fronds.col.push(tint, tint, tint, tint, tint, tint);
-          if (k < SEGS) { const a = b0 + k * 2; fronds.idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+          const f = k / SEGS, th = up - bend * Math.pow(f, 1.3);
+          if (k > 0) { const thm = up - bend * Math.pow(f - 0.5 / SEGS, 1.3); out += Math.cos(thm) * len / SEGS; rise += Math.sin(thm) * len / SEGS; }
+          const px = tx + dx * out, py = ty + rise, pz = tz + dz * out;
+          const w = wid * 0.5;
+          // The leaflets hang from the midrib: both edges sit below it,
+          // measured across the frond's own "up".
+          const ux = -dx * Math.sin(th), uy = Math.cos(th), uz = -dz * Math.sin(th), hang = 0.5 * w;
+          fronds.pos.push(px - sx * w - ux * hang, py - uy * hang, pz - sz * w - uz * hang, px, py, pz, px + sx * w - ux * hang, py - uy * hang, pz + sz * w - uz * hang);
+          fronds.uv.push(0, 1 - f, 0.5, 1 - f, 1, 1 - f);
+          for (let c = 0; c < 3; c++) fronds.col.push(tint * warm, tint, tint * (2 - warm) * 0.9);
+          if (k < SEGS) { const a = b0 + k * 3; fronds.idx.push(a, a + 1, a + 3, a + 1, a + 4, a + 3, a + 1, a + 2, a + 4, a + 2, a + 5, a + 4); }
         }
       }
     }
@@ -1097,11 +1337,13 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
 
   // ---------- assemble ----------
 
+  land.smoothNormals([0, 3]);
+  deco.smoothNormals([0]);
   const landGeo = land.geometry(), decoGeo = deco.geometry(), farGeo = far.geometry();
   bakeLight(land, landGeo);
   bakeLight(deco, decoGeo);
   const landMesh = new THREE.Mesh(landGeo, terrainMat);
-  const decoMesh = new THREE.Mesh(decoGeo, terrainMat);
+  const decoMesh = new THREE.Mesh(decoGeo, makeTerrainMaterial(sky, null, terrainMat));
   const farMesh = new THREE.Mesh(farGeo, terrainMat);
   for (const m of [landMesh, decoMesh, farMesh]) { m.frustumCulled = false; m.matrixAutoUpdate = false; group.add(m); }
   const frondGeo = new THREE.BufferGeometry();
@@ -1110,9 +1352,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   frondGeo.setAttribute('color', new THREE.Float32BufferAttribute(fronds.col, 3));
   frondGeo.setIndex(fronds.idx);
   frondGeo.computeVertexNormals();
-  // Fronds are lit from above whichever way they face.
-  { const n = frondGeo.attributes.normal; for (let i = 0; i < n.count; i++) n.setXYZ(i, n.getX(i) * 0.3, Math.abs(n.getY(i)) * 0.6 + 0.6, n.getZ(i) * 0.3); n.needsUpdate = true; }
-  const frondMesh = new THREE.Mesh(frondGeo, new THREE.MeshLambertMaterial({ map: makeFrondTexture(), alphaTest: 0.35, side: THREE.DoubleSide, vertexColors: true }));
+  const frondMesh = new THREE.Mesh(frondGeo, makeFrondMaterial(sky, terrainMat.uniforms.camPos));
   frondMesh.frustumCulled = false; frondMesh.matrixAutoUpdate = false;
   group.add(frondMesh);
 
