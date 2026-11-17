@@ -1,7 +1,10 @@
-// Sound design, all synthesized at startup (no sample files needed):
-// - Engine: a four-cylinder four-stroke firing loop (resampled with RPM),
-//   jet-pump impeller whine, and water rush that drops out in the air,
-//   where the unloaded engine revs up and gets brighter.
+// Sound design, all synthesized (no sample files needed):
+// - Engine: a three-cylinder four-stroke made sample by sample on the audio
+//   thread (engine-worklet.js): firing pulses through an exhaust pipe and
+//   muffler of fixed length, the wet exhaust blubbering at low speed, intake
+//   roar, pump whine and the limiter in the air. Where audio worklets are
+//   missing, a firing loop resampled with RPM stands in. Water rush under
+//   the hull drops out in the air.
 // - Ocean bed, splashes sized by landing speed, cash "cha-ching", and the
 //   Crispy J playlist.
 // - Space: a reverb send and a slap-back echo whose delay follows the
@@ -173,20 +176,34 @@ async function tryLoad(ctx, url) {
 
 export class EngineSound {
   // dest: an AudioNode (a panner for Jane, the listener's input for the player)
-  constructor(ctx, dest, buffers, volume = 1) {
+  // voice: the engine worklet is loaded, so use it
+  constructor(ctx, dest, buffers, volume = 1, voice = false) {
     this.ctx = ctx;
     this.out = ctx.createGain(); this.out.gain.value = 0; this.out.connect(dest);
     this.volume = volume;
     this.tone = ctx.createBiquadFilter(); this.tone.type = 'lowpass'; this.tone.Q.value = 0.7;
     this.tone.connect(this.out);
-
-    this.engine = ctx.createBufferSource(); this.engine.buffer = buffers.engine; this.engine.loop = true;
     this.engineGain = ctx.createGain();
-    this.engine.connect(this.engineGain).connect(this.tone);
+    this.engineGain.connect(this.tone);
 
-    this.whine = ctx.createOscillator(); this.whine.type = 'triangle';
-    this.whineGain = ctx.createGain(); this.whineGain.gain.value = 0;
-    this.whine.connect(this.whineGain).connect(this.out);
+    this.voice = null;
+    if (voice && !buffers.recorded) {
+      try {
+        this.voice = new AudioWorkletNode(ctx, 'jetski-engine', {
+          numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
+          processorOptions: { seed: (Math.random() * 2147483647) | 1 },
+        });
+        this.voice.connect(this.engineGain);
+        this.params = Object.fromEntries(['rpm', 'load', 'wet', 'air'].map((k) => [k, this.voice.parameters.get(k)]));
+      } catch { this.voice = null; }
+    }
+    if (!this.voice) {
+      this.engine = ctx.createBufferSource(); this.engine.buffer = buffers.engine; this.engine.loop = true;
+      this.engine.connect(this.engineGain);
+      this.whine = ctx.createOscillator(); this.whine.type = 'triangle';
+      this.whineGain = ctx.createGain(); this.whineGain.gain.value = 0;
+      this.whine.connect(this.whineGain).connect(this.out);
+    }
 
     this.rush = ctx.createBufferSource(); this.rush.buffer = buffers.noise; this.rush.loop = true;
     this.rushFilter = ctx.createBiquadFilter(); this.rushFilter.type = 'bandpass'; this.rushFilter.Q.value = 0.6;
@@ -199,14 +216,30 @@ export class EngineSound {
   start() {
     if (this.started) return;
     this.started = true;
-    this.engine.start(); this.whine.start(); this.rush.start(Math.random());
+    if (!this.voice) { this.engine.start(); this.whine.start(); }
+    this.rush.start(Math.random());
   }
 
   // rpm 0..~1.1, speed m/s, wet 0..1, airborne bool
-  // pitch: extra factor (Doppler); boost 0..1 brightens it
-  set(rpm, speed, wet, airborne, pitch = 1, boost = 0) {
+  // pitch: extra factor (Doppler); boost 0..1 brightens it; throttle 0..1
+  set(rpm, speed, wet, airborne, pitch = 1, boost = 0, throttle = rpm) {
     const t = this.ctx.currentTime;
     const r = Math.max(0, rpm) * (1 + boost * 0.12);
+    this.rushFilter.frequency.setTargetAtTime(400 + speed * 70, t, 0.1);
+    this.rushGain.gain.setTargetAtTime(airborne ? 0 : Math.min(1, speed / 14) * 0.35 * (0.3 + 0.7 * wet), t, airborne ? 0.03 : 0.12);
+    this.out.gain.setTargetAtTime(this.volume, t, 0.2);
+    if (this.voice) {
+      // 1650 rpm idle to 7850 flat out; past 8400 (in the air) the limiter cuts in.
+      const p = this.params;
+      p.rpm.setTargetAtTime((1650 + r * 6200) * pitch, t, 0.04);
+      p.load.setTargetAtTime(airborne ? 0.45 : Math.min(1, Math.max(0, throttle)), t, 0.05);
+      // The exhaust outlet is under water until the hull gets up and planes.
+      p.wet.setTargetAtTime(airborne ? 0 : wet * Math.max(0, 1 - speed / 8), t, 0.12);
+      p.air.setTargetAtTime(airborne ? 1 : 0, t, airborne ? 0.03 : 0.1);
+      this.engineGain.gain.setTargetAtTime(0.75 + 0.1 * Math.min(1, r), t, 0.08);
+      this.tone.frequency.setTargetAtTime((airborne ? 4200 : 1800) + Math.min(1, r) * 3000, t, 0.06);
+      return;
+    }
     // 1300 rpm idle to ~7800 rpm: playback 0.43 to 2.6 of the 3000 rpm loop.
     const rate = (this.recorded ? 0.7 + r * 0.9 : 0.43 + r * 2.0) * pitch;
     this.engine.playbackRate.setTargetAtTime(rate, t, 0.05);
@@ -215,9 +248,6 @@ export class EngineSound {
     const fire = 43 + r * 217;
     this.whine.frequency.setTargetAtTime(fire * 6.5 * pitch, t, 0.05);
     this.whineGain.gain.setTargetAtTime(0.012 + r * r * (airborne ? 0.07 : 0.04), t, 0.06);
-    this.rushFilter.frequency.setTargetAtTime(400 + speed * 70, t, 0.1);
-    this.rushGain.gain.setTargetAtTime(airborne ? 0 : Math.min(1, speed / 14) * 0.35 * (0.3 + 0.7 * wet), t, airborne ? 0.03 : 0.12);
-    this.out.gain.setTargetAtTime(this.volume, t, 0.2);
   }
 }
 
@@ -268,7 +298,19 @@ export class Sfx {
     if (splash) this.buffers.splash = splash;
   }
 
-  engine(dest, volume) { return new EngineSound(this.ctx, dest || this.bus, this.buffers, volume); }
+  // The engine's voice runs on the audio thread; until it has loaded (or
+  // where it can't), engines use the firing loop.
+  async loadEngine() {
+    if (this.voice !== undefined) return this.voice;
+    this.voice = false;
+    try {
+      await this.ctx.audioWorklet.addModule(new URL('./engine-worklet.js', import.meta.url).href);
+      this.voice = true;
+    } catch (err) { console.warn('Engine worklet unavailable, using the loop:', err); }
+    return this.voice;
+  }
+
+  engine(dest, volume) { return new EngineSound(this.ctx, dest || this.bus, this.buffers, volume, this.voice === true); }
 
   // A looping buffer through a filter and gain, for wind, scrape and the waterfall.
   loop(name, buf, type, freq, q, dest) {

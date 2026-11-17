@@ -1,6 +1,7 @@
-// Effects around the jetskis: a foam wake ribbon, spray particles (bow
-// spray, the rooster tail behind the jet, landing bursts), speed streaks and
-// pink and yellow confetti for pick-ups and the finish.
+// Effects around the jetskis: a foam wake ribbon, spray (sheets off the bow,
+// the rooster tail behind the jet, curtains in hard turns, landing bursts,
+// drops and mist), speed streaks and pink and yellow confetti for pick-ups
+// and the finish.
 import * as THREE from 'three';
 
 export function createWake(scene, ocean) {
@@ -81,26 +82,49 @@ export function createWake(scene, ocean) {
   };
 }
 
-export function createSpray(scene, sunColor) {
-  const N = 260;
+// Spray off the jetskis: droplets that fly and fall back into the sea, and
+// mist that hangs, spreads and fades. Sheets peel off both sides of the bow
+// at speed, the jet throws a rooster tail, the outside of a hard turn throws
+// a curtain, and landings burst. Mist glows when the sun is behind it.
+// view() each frame gives the eye's position and the height of its picture
+// in pixels, so a drop is the right size on any screen and in the headset.
+export function createSpray(scene, sunColor, sunDir) {
+  const N = 1100;
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(N * 3);
   const life = new Float32Array(N);
   const size = new Float32Array(N);
+  const kind = new Float32Array(N);    // 0 a drop, 1 mist
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
   geo.setAttribute('life', new THREE.BufferAttribute(life, 1).setUsage(THREE.DynamicDrawUsage));
   geo.setAttribute('size', new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage));
-  const vel = new Float32Array(N * 3);
+  geo.setAttribute('kind', new THREE.BufferAttribute(kind, 1).setUsage(THREE.DynamicDrawUsage));
+  const vel = new Float32Array(N * 3), fade = new Float32Array(N), grow = new Float32Array(N), floor = new Float32Array(N);
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
-    uniforms: { sunColor: { value: sunColor } },
+    uniforms: { sunColor: { value: sunColor }, sunDir: { value: sunDir || new THREE.Vector3(0, 1, 0) }, camPos: { value: new THREE.Vector3() }, halfH: { value: 400 } },
     vertexShader: /* glsl */`
-      attribute float life; attribute float size; varying float vLife;
-      void main() { vLife = life; vec4 mv = viewMatrix * vec4(position, 1.0); gl_PointSize = 900.0 * size / max(0.1, -mv.z); gl_Position = projectionMatrix * mv; }`,
+      attribute float life; attribute float size; attribute float kind;
+      uniform vec3 camPos; uniform vec3 sunDir; uniform float halfH;
+      varying float vA; varying float vKind; varying float vSun;
+      void main() {
+        vec4 mv = viewMatrix * vec4(position, 1.0);
+        float d = max(0.1, -mv.z);
+        gl_PointSize = min(240.0, projectionMatrix[1][1] * halfH * size / d);
+        gl_Position = projectionMatrix * mv;
+        vKind = kind;
+        // Mist right at the eyes would fill the view: it thins out within a metre or two.
+        vA = pow(life, 0.6) * (kind > 0.5 ? 0.55 : 0.95) * smoothstep(0.6, 1.8, d);
+        vSun = pow(max(dot(normalize(position - camPos), sunDir), 0.0), 6.0);
+      }`,
     fragmentShader: /* glsl */`
-      uniform vec3 sunColor; varying float vLife;
-      void main() { vec2 c = gl_PointCoord - 0.5; float d = smoothstep(0.25, 0.0, dot(c, c));
-        gl_FragColor = vec4(vec3(0.85) * (0.6 + 0.5 * sunColor), d * vLife * 0.7); if (gl_FragColor.a < 0.01) discard;
+      uniform vec3 sunColor; varying float vA; varying float vKind; varying float vSun;
+      void main() {
+        vec2 c = gl_PointCoord - 0.5; float r2 = dot(c, c);
+        float a = (vKind > 0.5 ? exp(-r2 * 9.0) * (1.0 - smoothstep(0.15, 0.25, r2)) : 1.0 - smoothstep(0.06, 0.25, r2)) * vA;
+        if (a < 0.006) discard;
+        vec3 col = vec3(0.86, 0.88, 0.92) * (0.55 + 0.5 * sunColor) + sunColor * vSun * (vKind > 0.5 ? 1.5 : 0.7);
+        gl_FragColor = vec4(col, a);
         #include <colorspace_fragment>
       }`,
   });
@@ -108,54 +132,85 @@ export function createSpray(scene, sunColor) {
   points.frustumCulled = false;
   scene.add(points);
   let next = 0;
-  const emit = (x, y, z, vx, vy, vz, s) => {
+  const R = Math.random;
+  // A drop (mist = false) or a puff of mist.
+  const emit = (x, y, z, vx, vy, vz, s, mist, water) => {
     const i = next; next = (next + 1) % N;
     pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
     vel[i * 3] = vx; vel[i * 3 + 1] = vy; vel[i * 3 + 2] = vz;
-    life[i] = 1; size[i] = s;
+    life[i] = 1; size[i] = s; kind[i] = mist ? 1 : 0;
+    fade[i] = mist ? 0.55 + R() * 0.35 : 0.75 + R() * 0.4;
+    grow[i] = mist ? s * (1.1 + R()) : 0;
+    floor[i] = water - 0.25;
   };
   const acc = new Map();
   return {
-    // A jetski's continuous spray. key separates emitters.
+    view(camPos, pixelsHigh) { mat.uniforms.camPos.value.copy(camPos); mat.uniforms.halfH.value = pixelsHigh / 2; },
+    // A jetski's spray. key keeps each one's emitters apart.
     emitCraft(key, dt, c, waterY) {
       if (c.airborne || c.wet === 0) return;
+      let st = acc.get(key);
+      if (!st) acc.set(key, st = { bow: 0, tail: 0, turn: 0 });
       const speed = Math.abs(c.fwdSpeed);
-      let a = (acc.get(key) || 0) + dt * (speed > 3 ? speed * 3.5 : 0) + dt * c.rpm * 14;
       const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw), rx = Math.cos(c.yaw), rz = -Math.sin(c.yaw);
-      while (a >= 1) {
-        a -= 1;
-        if (Math.random() < 0.6 && speed > 3) {
-          // Bow spray to the sides.
-          const side = Math.random() < 0.5 ? -1 : 1;
-          const out = 1.5 + Math.random() * 2.5, up = 1.2 + Math.random() * 2;
-          emit(c.x + fx * 0.6 + rx * side * 0.5, waterY + 0.05, c.z + fz * 0.6 + rz * side * 0.5,
-            rx * side * out + c.vx * 0.6, up, rz * side * out + c.vz * 0.6, 0.05);
-        } else {
-          // Rooster tail from the jet.
-          const back = 2 + c.rpm * 5, up = 1 + c.rpm * 3.5;
-          emit(c.x - fx * 1.5, waterY + 0.1, c.z - fz * 1.5,
-            -fx * back + c.vx * 0.5 + (Math.random() - 0.5), up * (0.7 + Math.random() * 0.5), -fz * back + c.vz * 0.5 + (Math.random() - 0.5), 0.09);
-        }
+      // Bow sheets, both sides, from a walking pace up.
+      st.bow += dt * (speed > 4 ? (speed - 4) * 9 : 0);
+      while (st.bow >= 1) {
+        st.bow -= 1;
+        const side = R() < 0.5 ? -1 : 1, back = R() * 0.9, mist = R() < 0.25;
+        const out = 1.4 + speed * 0.11 + R() * 1.6, up = 0.9 + speed * 0.07 + R() * 1.5;
+        emit(c.x + fx * (0.9 - back) + rx * side * 0.52, waterY + 0.05, c.z + fz * (0.9 - back) + rz * side * 0.52,
+          rx * side * out + c.vx * 0.55, up, rz * side * out + c.vz * 0.55, mist ? 0.35 + R() * 0.3 : 0.05 + R() * 0.05, mist, waterY);
       }
-      acc.set(key, a);
+      // The rooster tail: the jet's plume behind, as tall as the throttle.
+      st.tail += dt * c.rpm * (14 + speed * 3);
+      while (st.tail >= 1) {
+        st.tail -= 1;
+        const mist = R() < 0.45, back = 2.2 + c.rpm * 4.2, up = (1.8 + c.rpm * 4.6) * (0.7 + R() * 0.55);
+        emit(c.x - fx * 1.6 + (R() - 0.5) * 0.3, waterY + 0.15, c.z - fz * 1.6 + (R() - 0.5) * 0.3,
+          -fx * back + c.vx * 0.5 + rx * (R() - 0.5) * 1.3, up, -fz * back + c.vz * 0.5 + rz * (R() - 0.5) * 1.3,
+          mist ? 0.5 + R() * 0.45 : 0.06 + R() * 0.06, mist, waterY);
+      }
+      // A curtain off the outside of a hard turn.
+      const carve = Math.abs(c.yawRate) * speed;
+      st.turn += dt * (carve > 4 ? (carve - 4) * 7 : 0);
+      while (st.turn >= 1) {
+        st.turn -= 1;
+        const side = c.yawRate > 0 ? 1 : -1, mist = R() < 0.3, out = 2.5 + R() * 3.2, up = 1.2 + R() * 2.2;
+        emit(c.x - fx * (0.2 + R() * 0.9) + rx * side * 0.55, waterY + 0.05, c.z - fz * (0.2 + R() * 0.9) + rz * side * 0.55,
+          rx * side * out + c.vx * 0.4, up, rz * side * out + c.vz * 0.4, mist ? 0.4 + R() * 0.35 : 0.05 + R() * 0.05, mist, waterY);
+      }
     },
     burst(x, y, z, strength) {
-      const n = Math.min(80, 20 + strength * 12);
+      const k = Math.sqrt(Math.max(0.2, strength));
+      const n = Math.min(170, 30 + strength * 30);
       for (let i = 0; i < n; i++) {
-        const a = Math.random() * Math.PI * 2, out = 1 + Math.random() * 2.5 * strength * 0.4;
-        emit(x + Math.cos(a) * 0.8, y, z + Math.sin(a) * 0.8, Math.cos(a) * out, 1.5 + Math.random() * strength * 0.9, Math.sin(a) * out, 0.07 + Math.random() * 0.06);
+        const a = Math.random() * Math.PI * 2, mist = i % 5 === 0, out = (1.2 + R() * 3.6) * k;
+        emit(x + Math.cos(a) * 0.9, y, z + Math.sin(a) * 0.9, Math.cos(a) * out, (1.8 + R() * 3.5) * k, Math.sin(a) * out,
+          mist ? 0.6 + R() * 0.6 : 0.06 + R() * 0.07, mist, y - 0.1);
       }
     },
     update(dt) {
+      const drag = Math.exp(-2.6 * dt), air = Math.exp(-0.25 * dt);
       for (let i = 0; i < N; i++) {
         if (life[i] <= 0) continue;
-        life[i] -= dt * 1.2;
-        vel[i * 3 + 1] -= 9.8 * dt;
-        pos[i * 3] += vel[i * 3] * dt; pos[i * 3 + 1] += vel[i * 3 + 1] * dt; pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+        life[i] -= dt * fade[i];
+        const j = i * 3;
+        if (kind[i] > 0.5) {
+          // Mist slows at once, sinks slowly and spreads.
+          vel[j] *= drag; vel[j + 1] = vel[j + 1] * drag - 1.4 * dt; vel[j + 2] *= drag;
+          size[i] += grow[i] * dt;
+        } else {
+          vel[j] *= air; vel[j + 1] -= 9.8 * dt; vel[j + 2] *= air;
+          if (pos[j + 1] < floor[i] && vel[j + 1] < 0) life[i] = 0; // back in the sea
+        }
+        pos[j] += vel[j] * dt; pos[j + 1] += vel[j + 1] * dt; pos[j + 2] += vel[j + 2] * dt;
+        if (life[i] < 0) life[i] = 0;
       }
       geo.attributes.position.needsUpdate = true;
       geo.attributes.life.needsUpdate = true;
       geo.attributes.size.needsUpdate = true;
+      geo.attributes.kind.needsUpdate = true;
     },
   };
 }
