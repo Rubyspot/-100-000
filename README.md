@@ -1,16 +1,19 @@
 # $100,000 – opening
 
 WebXR opening of the "$100,000" experience: mixed reality, "Seagulls Love Too"
-starts, a portal opens in the room's entrance and a seagull comes out and settles
-on the bottom of its rim. A $100 bill flutters down from the ceiling to it, the gull
-jumps up, catches it and flies back in (its sounds fade as it goes), then the player
-flies through the portal into the room scan. Jane's splat forms there out of
-particles and goes through her three poses, 10 s each, changing through a swirl
-of particles: surfboard, shaka, then singing into a microphone, where she stays.
-The gold ball starts the 180° video, and the song fades out when it starts. After
-the video she comes back in the shaka pose and offers the jetski race: a toy jetski
-floats in front of the player, and touching it starts the race ([jetski/](jetski/README.md))
-in the same session. Leaving the race comes back to the room, where she reacts to the result.
+starts, a portal opens in the room's entrance and a seagull glides out of it and
+lands on the bottom of its rim. A $100 bill flutters down from the ceiling to it, the
+gull jumps up, catches it, climbs, turns and dives back in (its calls fade as it
+goes), then the player flies through the portal into the room scan, which stands on
+a tropical beach (a 360 photo all round it). Jane is in the room from the first
+moment, in her yoga pose. On arrival she goes through her other poses, 3 s each,
+changing through a swirl of particles: surfboard, singing into a microphone, then
+the heart pose, where she stays. The gold ball starts the 180° video, and the song
+fades out when it starts. After the video she comes back in the jetski pose and
+offers the jetski race: a toy jetski floats in front of the player, and touching it
+starts the race ([jetski/](jetski/README.md)) in the same session. Leaving the race
+comes back to the room, where she reacts to the result, and the video's gold ball
+floats beside the jetski to watch it again.
 
 - three.js + [Spark 2](https://sparkjs.dev) for splats, vendored in `vendor/` (no build step).
 - `assets/room-400k.sog`: "Room splat" scan decimated from 4.4M to 400k splats, no SH, lifted 7 cm
@@ -19,9 +22,18 @@ in the same session. Leaving the race comes back to the room, where she reacts t
   FBX files by `tools/fbx-to-glb/convert.cjs` (what it changes is in its header). The gull is painted
   with vertex colours (`tools/fbx-to-glb/gull-paint.js`) until its textures (T_Seagull_D/N,
   T_SeagullFeathers_D/N, T_SeagullEye_D) are added. It has no sitting animation, so `foldWings` in
-  `main.js` folds its wings in code and it stands on its rest-pose legs on the rim.
-- `jane/splat-jane.js`: Jane's three splat scans (surfboard, NEW and Sing; 150k each) and the particle
-  transformation between them, a Spark dyno modifier modelled on Spark's own "Splat Transitions".
+  `main.js` folds its wings in code and it stands on its rest-pose legs on the rim. In flight it
+  leans into its turns as far as its speed and the turn's tightness ask (a bird's banked turn),
+  flaps hard only to climb or brake and glides between, and flares with its legs down to land.
+  Its calls are made in `audio.js`: herring-gull yelps and a laughing series, with the break in
+  the voice that makes a gull sound harsh; its wings are heard only on the hard beats.
+- `assets/seagull/bill-100.jpg`: the bill's two faces from Ilia's texture (front over back), mapped
+  onto the twisted bill's front and back by `mapBillFaces` in `main.js`.
+- `assets/outside.jpg`: the 360 view outside the room (2:1 equirectangular). Until Ilia's tropical
+  island photo comes it is a view of the race's lagoon from its start beach; replace the file with
+  any 2:1 JPEG or PNG (4096×2048 is plenty), or try one first with `?outside=<url>`.
+- `jane/splat-jane.js`: Jane's splat scans (150k each) and the particle transformation between them,
+  a Spark dyno modifier modelled on Spark's own "Splat Transitions". See "Jane's poses" below.
 - Quest settings are Ilia's picks from the Jane splat test: splat budget 500k, 80% resolution, fixed
   foveation 1, fast preset (`?budget`, `?fb`, `?ffr`, `?stddev`, `?lodpx`, `?sortms`, `?clip`,
   `?minpx`, `?maxpx`, `?cone`, `?behind` override them, as on the test page).
@@ -30,8 +42,11 @@ in the same session. Leaving the race comes back to the room, where she reacts t
 URL options: `?debug` (fps and video source label in headset), `?to=desk` (fly to the desk instead of the coffee table), `?lod=0`
 (disable Spark LoD), `?scan=<url>` (load another .sog/.spz/.ply), `?floor=0.07` (lift the room scan, metres),
 `?spot=-0.68,-1.93` (where Jane stands, room-scan x,z), `?height=1.75` (Jane's height), `?sparks=0.35`
-(share of her splats that fly as sparks when she transforms, 1 = all), `?poses=surf,new,sing` (her poses
-and their order), `?hold=10` (seconds on each pose), `?music=0.55`
+(share of her splats that fly as sparks when she transforms, 1 = all), `?poses=yoga,surf,sing,heart` (her
+poses before the video, in order), `?after=jetski` (her pose after it), `?hold=3` (seconds on each pose),
+`?morph=2` (seconds each change takes), `?outside=<url>` (another 360 image outside the room; `off` keeps
+a plain sky), `?outsideturn=90` (turns it, degrees), `?controls=0.3,0.43` (the video controls this far
+below the eyes and out from them, metres), `?music=0.55`
 (song volume, 0 mutes), `?jane=off` (no Jane), `?autostart` (flat preview), `?race=0` (leave the jetski
 race out; the floating jetski then opens `/jetski/`), `?aa=1` (multisampling for the whole session: off
 by default because it costs frame rate with splats, but the race's edges are smoother with it),
@@ -52,16 +67,14 @@ the headset is asked for a display refresh rate that the video's frame rate
 divides (120 Hz for 60 fps), so frames step evenly; `?hz=90` asks for another
 rate and `?hz=0` leaves it alone.
 
-While it plays, three palm-sized buttons (8.4 cm) are within reach about 45°
-below eye level (`video-controls.js`): back 10 s, pause / play and close, with
-the playing time and the source's tag (8K+, 8K or 4K) above them. Press one with
-a fingertip, or point a controller (or a pinching hand) at it and pull the
-trigger (pinch); on a flat screen, click. The plate fades out two seconds after
-it was last used and comes back, under wherever the viewer is facing by then,
-when they lift an open hand: the palm above the chest (less than 0.3 m under the
-eyes, `?lift=0.3`), fingers straight. A trigger pull, a pinch or a mouse move
-brings it back too. It stays while the video is paused or has no picture yet.
-Close goes back to the room and Jane.
+While it plays, three palm-sized buttons (8.4 cm) sit at the lower edge of the
+picture, within reach (`video-controls.js`): back 10 s, pause / play and close,
+with the playing time and the source's tag (8K+, 8K or 4K) above them. They stay
+on the whole time (Ilia, Nov 17), placed when the video starts 0.3 m under the
+eyes and 0.43 m out toward the middle of the picture (`?controls=0.3,0.43`).
+Press one with a fingertip, or point a controller (or a pinching hand) at it and
+pull the trigger (pinch); on a flat screen, click. Close goes back to the room
+and Jane.
 
 Three copies of the video:
 
@@ -115,11 +128,28 @@ Other options: `?speed=0.4` sets the flight speed in m/s (constant).
 
 `window.sceneApi` exposes the scene to other modules (the Jane avatar):
 `scene`, `renderer`, `camera`, `rig` (camera parent; the flight moves it),
-`anchor`, `listener`, `showPlayBall(on)`, `playVideo()`, `arrivalPose()`,
+`anchor`, `listener`, `showPlayBall(on, at)` (`at`: a world position, or its
+usual spot), `playVideo()`, `arrivalPose()`,
 `startJetski()` (starts the race in this session; false if it isn't loaded) and
 `autoPlayBall` (set false to control when the play ball shows). Window events:
 `scene:arrived`, `scene:video-start`, `scene:video-end`, `scene:jetski-end` (back
 from the race; `detail` is its result: money, time, won, bills, total, finished).
+
+## Jane's poses
+
+Ilia's five poses (Nov 17): yoga (in the room before the player comes in), surf,
+sing and heart before the video, and jetski after it. Each is a 150k-splat SOG
+named after it in `assets/jane/` (`yoga-150k.sog` and so on); a pose whose file
+isn't there yet is skipped, so the chain runs with what is in. To add one from a
+Postshot scan:
+
+    tools/jane-pose.sh scan.ply yoga
+
+It turns spherical harmonics off, cuts the scan to 150k splats with the adaptive
+decimator and writes SOG v2, then prints the pose's line for `JANE_SCANS` in
+`jane/splat-jane.js`: where her feet are and the axis she turns around in the
+transformation. Its height fits a standing pose only; for a seated or bent one
+keep 1.634 (surf's, from the same capture rig).
 
 ## Jane
 
