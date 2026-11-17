@@ -1052,23 +1052,25 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
 
   // ---------- plants ----------
 
-  // Bushes: squashed, lumpy icosahedra in a few greens, the bigger ones
-  // subdivided once so their outline is a lumpy clump rather than a
-  // polygon. The face corners of an icosahedron share its points (12, or
-  // 42 subdivided); each point gets one jitter, so a bush stays a closed
+  // Bushes: squashed, lumpy icosahedra in a few greens. The bigger ones
+  // within sight of the course are subdivided once, so their outline is a
+  // lumpy clump rather than a polygon. The face corners of an icosahedron
+  // share its points (12, or 42 subdivided): the shape is rebuilt indexed on
+  // those points, and each point gets one jitter, so a bush stays a closed
   // clump instead of breaking into shards.
   {
     const shapes = [0, 1].map((detail) => {
       const ico = new THREE.IcosahedronGeometry(1, detail);
-      const point = [], first = [];
-      const seen = [], q = ico.attributes.position, v = new THREE.Vector3();
+      const index = [], seen = [], q = ico.attributes.position, v = new THREE.Vector3();
       for (let i = 0; i < q.count; i++) {
         v.fromBufferAttribute(q, i);
         let k = seen.findIndex((o) => o.distanceToSquared(v) < 1e-6);
-        if (k < 0) { k = seen.length; seen.push(v.clone()); first.push(i); }
-        point.push(k);
+        if (k < 0) { k = seen.length; seen.push(v.clone()); }
+        index.push(k);
       }
-      return { ico, point, jitter: new Float32Array(seen.length) };
+      const geo = new THREE.BufferGeometry().setFromPoints(seen);
+      geo.setIndex(index);
+      return { geo, jitter: new Float32Array(seen.length) };
     });
     const greens = [C(0x2a5f20), C(0x357a28), C(0x4a8a2e), C(0x23501f), C(0x5a8f33)];
     const hill = lagoonIsle;
@@ -1081,9 +1083,9 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
     for (const [x, y, z, s] of leafSpots) {
       const g = greens[Math.floor(rnd() * greens.length)];
       const m = M4(x, y + s * 0.25, z, rnd() * 6, s * (0.9 + rnd() * 0.5), s * (0.6 + rnd() * 0.3), s * (0.9 + rnd() * 0.5), rnd() * 0.5, rnd() * 0.5);
-      const sh = shapes[s >= 2.4 ? 1 : 0];
+      const sh = shapes[s >= 2.2 && courseNear(x, z, 2).dist < 40 ? 1 : 0];
       for (let i = 0; i < sh.jitter.length; i++) sh.jitter[i] = 0.72 + 0.56 * rnd();
-      deco.add(sh.ico, m, g, 2, (v, c, i) => { v.multiplyScalar(sh.jitter[sh.point[i]]); c.multiplyScalar(0.75 + 0.5 * (v.y * 0.5 + 0.5)); });
+      deco.add(sh.geo, m, g, 2, (v, c, i) => { v.multiplyScalar(sh.jitter[i]); c.multiplyScalar(0.75 + 0.5 * (v.y * 0.5 + 0.5)); });
     }
   }
 
