@@ -1,7 +1,7 @@
 # video-8k: the 180° video's original master, in streamable pieces
 
 This branch holds only the original master of the 180° side-by-side video
-(8000×4000, 60 fps, HEVC, about 120 Mbit/s; the 66 s demo cut), split into
+(8000×4000, 60 fps, HEVC, about 130 Mbit/s; the 66 s demo cut), split into
 fragmented MP4 segments so that no file reaches GitHub's 100 MB limit. The
 picture is the master's own stream copied bit for bit, with no re-encode; only
 the audio was converted to AAC, because PCM can't play through Media Source
