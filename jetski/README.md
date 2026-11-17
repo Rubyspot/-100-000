@@ -7,8 +7,8 @@ bank the song's $100,000.
 The game is a module (`race.js`). It runs in two places:
 
 - **In the opening** (`../main.js`): after the 180 video Jane offers the ride and a toy jetski floats in front
-  of the player. Touching it starts the race in the same session; JANE on the results board comes back to
-  her room, where she reacts to the result and offers another lap.
+  of the player. Touching it starts the race in the same session; Back on the handlebar (or BACK on the
+  results board) comes back to her room, where she reacts to the result and offers another lap.
 - **On its own page**: `https://rubyspot.github.io/-100-000/jetski/`, **Enter VR** in Quest Browser, or the
   flat preview with the keyboard.
 
@@ -22,13 +22,19 @@ The game is a module (`race.js`). It runs in two places:
 
 The islands, canals and stacks are generated in `world.js`: limestone towers with near-vertical sides and
 a jungle crown; the stone broken into blocks and chips that catch the light face by face, with open joints,
-pits in patches, a ledge here and there, rain streaks and rust stains; round leaf clumps with ragged
-outlines; palms with ringed trunks and arching fronds that let the sun through; sand beaches, inflatable
-ramps, buoys and bunting in pink and yellow.
+pits in patches, a ledge here and there, rain streaks and rust stains, and up close the relief of real
+stone (scanned normal maps in `assets/stone`, CC0: a cliff face's runnels and ribs on the sides, rough
+stone on top, grit in the sand), darker in its cracks; round leaf clumps with ragged outlines; palms with
+ringed trunks and arching fronds that let the sun through; sand beaches; and glossy inflatables in pink
+and yellow (the arches, ramps, floats, parasols, buoys), smooth and catching the sky like PVC.
+
+The light is a sunset, as in the first builds (`sky.js`): a peach horizon, a rose band, violet and a deep
+blue zenith with clouds lit pink from below, and a low sun ahead and to the left of the start straight.
+Far things fade into the colour of the sky low over the horizon in their direction.
 
 The water (`ocean.js`) is open sea, the way the first build drew it: a swell you ride over, a deep body
 colour in the wave faces turned toward you, the sky mirrored in the faces turned away (rock and trees
-instead of sky inside the canals), a road of sun glitter toward the afternoon sun, light glowing through
+instead of sky inside the canals), a road of sun glitter toward the low sun, light glowing through
 the crests, whitecaps, foam along the shore. Its colour comes from the depth: pale sand and dark sea grass
 show through the shallows off the beaches, the lagoon runs turquoise to teal, and the open sea is deep
 blue. Cliffs throw their shadows on it. Swell calms down in the canals, the same on the GPU and in the
@@ -56,12 +62,17 @@ physics.
 - Fallbacks: controllers (right trigger = go; hold a trigger or a grip button and tilt that controller, or
   use the thumbstick, to steer; A/B on the results) and the keyboard in the flat preview (W/↑ go, A/D or ←/→ steer, Space start, R again,
   Esc exit).
+- **Back**: the 180 video's Back button, in the same place under the view and the same look, stands on
+  the handlebar between the hands from the start line to the finish. Hold a fingertip or a controller on
+  it for half a second (a gold ring fills), or hold B or Esc, to leave the ride; a click does it in the flat
+  preview. In the opening it goes back to Jane's room, on its own page it ends the session.
 
 ## Mechanics
 
 - **Follow the bills.** The flock (Ilia's rigged seagull) flies about 60 m ahead and drops bills every
   10 m along the racing line. A bill is Ilia's `Bill_03_Gentle_Twist` mesh, a thin twisted sheet, drawn
-  1.45 m wide with a printed $100 face on both sides, lit by the sun and turning slowly so the twist shows;
+  0.9 m wide (`?bill=`) with the real $100 bill printed on both sides (Ilia's texture, `assets/bill`), lit
+  by the sun and turning slowly so the twist shows;
   a golden halo behind each one marks the trail from far away. A bill within 3.4 m flies to you, and from
   up to 5 m while your combo is low, so the money comes to a rider who is struggling.
 - **Crispy combo**: each bill in a row is worth $250 more, up to $2,500 at x10. A missed bill costs one
@@ -77,12 +88,18 @@ physics.
 Hot pink, sunny yellow, cream and plum, set in Fredoka (`assets/fonts`, SIL Open Font License): a dash on
 the handlebar (cash and the bar to $100,000, combo pips, place, speed, time, you and Jane on the lap), big
 messages ahead, "+$700" pops, confetti, and a results board with two palm-size buttons at arm's reach
-(AGAIN, and EXIT or JANE). A soft vignette in fast turns (`?vignette=0`).
+(AGAIN, and BACK or EXIT). The Back button on the bar (`back-button.js`) takes the video controls' look
+instead: a gold button with a white arrow on dark glass. A soft vignette in fast turns (`?vignette=0`).
 
 ## Sound
 
-Synthesized at the audio context's own rate (Quest runs at 48 kHz): engine, wind, hull slaps, wall scrape
-and thuds, boost whoosh, a pluck that climbs a pentatonic scale with the combo and a crackle on each bill,
+Synthesized at the audio context's own rate (Quest runs at 48 kHz). The engine (`engine-worklet.js`) is
+made sample by sample on the audio thread like a real three-cylinder jetski: firing pulses that differ a
+little every cycle, through an exhaust pipe and a muffler box of fixed length (their resonances stay put
+while the revs sweep through them), a wet exhaust that blubbers with bubbles at low speed and clears when
+the hull planes, intake roar under the seat with the throttle, the pump's whine, the limiter cutting in
+when the pump leaves the water, and pops off the throttle. Where audio worklets are missing, a firing loop
+stands in. Then water rush under the hull, wind, hull slaps, wall scrape and thuds, boost whoosh, a pluck that climbs a pentatonic scale with the combo and a crackle on each bill,
 gate chimes, a boing off the ramps, countdown, fanfare. Reverb and a slap-back echo make the canals sound
 enclosed. Jane's engine and the gulls are positioned in space. The Crispy J playlist plays on top
 (`?music=0`). Recorded `engine.mp3`, `ocean.mp3` or `splash.mp3` in `audio/`, listed in
@@ -98,8 +115,11 @@ enclosed. Jane's engine and the gulls are positioned in space. The Crispy J play
 - `world.js`: course, islands, canals, props, collisions, and the baked maps (distance to land, depth,
   light on the water, sun and sky on every rock vertex).
 - `ocean.js`, `sky.js`: water and sky. `craft.js`: jetski physics. `controls.js`: hands, controllers,
-  keyboard. `hud.js`: the interface. `gulls.js`: flock, bills, combo. `effects.js`: wake, spray, speed
-  streaks, confetti. `sfx.js`: sound. `models.js`: jetski, gloves, Jane.
+  keyboard. `hud.js`: the interface; `back-button.js`: Back on the bar. `gulls.js`: flock (banking into
+  turns, gliding with bursts of flapping), bills, combo. `effects.js`: wake, spray (sheets off the bow, the
+  rooster tail, curtains in hard turns, landing bursts; drops and mist), speed streaks, confetti.
+  `sfx.js`: sound; `engine-worklet.js`: the engine. `models.js`: jetski, gloves, Jane.
+- `assets/stone`: the stone and sand relief (CC0, see its README). `assets/bill`: the $100 bill.
 
 ## URL options (standalone page)
 
@@ -107,7 +127,7 @@ enclosed. Jane's engine and the gulls are positioned in space. The Crispy J play
 `=sloppy` weaves into walls), `?chase`
 (`=jane` looks at her), `?map`, `?at=N` (start at control point N), `?debug` (fps on the dash,
 `window.simulate(seconds)`), `?bar=0.36,0.42`, `?riser=0.12`, `?steer=1.3` (steering gain),
-`?throttle=any` (either hand is the throttle), `?fb=0.9` (headset resolution scale),
+`?throttle=any` (either hand is the throttle), `?bill=0.9` (width of a bill, metres), `?fb=0.9` (headset resolution scale),
 `?music=0`, `?vignette=0`, `?streaks=0`, `?heave=0` (the view keeps its height), `?jane=simple` (no scan).
 
 In the opening: `?bar=`, `?riser=`, `?steer=`, `?throttle=any`, `?vignette=0`, `?streaks=0`, `?heave=0`,

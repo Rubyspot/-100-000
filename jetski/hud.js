@@ -7,8 +7,10 @@
 //   - Jane's lines in a speech bubble
 //   - "+$700" pops when a bill is picked up
 //   - a results board with two palm-size buttons at arm's reach
+//   - the Back button on the handlebar all through the ride (back-button.js)
 //   - a soft vignette in fast turns and the fade used between scenes
 import * as THREE from 'three';
+import { createBackButton } from './back-button.js';
 
 export const COLORS = { pink: '#ff4fa3', yellow: '#ffd23f', plum: '#2a1030', cream: '#fff6e0', mint: '#7ef0c8', sky: '#4fd6ff' };
 const C = COLORS;
@@ -237,7 +239,7 @@ export function createHud({ holder, camera, font, eyeY, embedded = false, goal =
   }
   const buttons = {
     again: makeButton('AGAIN', C.yellow, C.plum, 'again'),
-    exit: makeButton(embedded ? 'JANE' : 'EXIT', C.pink, C.cream, 'back'),
+    exit: makeButton(embedded ? 'BACK' : 'EXIT', C.pink, C.cream, 'back'),
   };
   buttons.again.mesh.position.set(-0.13, eyeY - 0.2, -0.43);
   buttons.exit.mesh.position.set(0.13, eyeY - 0.2, -0.43);
@@ -276,6 +278,14 @@ export function createHud({ holder, camera, font, eyeY, embedded = false, goal =
     return null;
   }
 
+  // ---------- Back, on the bar ----------
+  const back = createBackButton({ label: embedded ? 'Back' : 'Exit' });
+  function clickBack(ndc) {
+    if (!back.visible) return false;
+    ray.setFromCamera(ndc, camera);
+    return back.hit(ray);
+  }
+
   // ---------- head-locked: vignette and fade ----------
   const headShader = (frag, uniforms) => new THREE.ShaderMaterial({
     transparent: true, depthTest: false, depthWrite: false, side: THREE.BackSide, uniforms,
@@ -299,15 +309,20 @@ export function createHud({ holder, camera, font, eyeY, embedded = false, goal =
 
   let lastDash = -1;
   return {
-    dashMesh, buttons, hints,
+    dashMesh, buttons, hints, back,
     attach(ski) {
-      dashMesh.position.copy(ski.bar.position).add(new THREE.Vector3(0, 0.1, -0.2));
+      dashMesh.position.copy(ski.bar.position).add(new THREE.Vector3(0, 0.12, -0.2));
       dashMesh.rotation.x = -0.5;
       ski.body.add(dashMesh);
       ski.grips.forEach((g, i) => g.add(hints[i]));
+      // Back sits just above the middle of the bar, under the dash, turned up
+      // to the eyes.
+      const at = back.root.position.copy(ski.bar.position).add(new THREE.Vector3(0, 0.075, 0.013));
+      back.root.rotation.x = -Math.atan2(ski.eye.y - at.y, -at.z);
+      ski.body.add(back.root);
     },
     dash(info, now) { if (now - lastDash < 0.1) return; lastDash = now; drawDash(info); },
-    panel: showPanel, say, pop, results: showResults, pressButtons, clickButtons,
+    panel: showPanel, say, pop, results: showResults, pressButtons, clickButtons, clickBack,
     gripHint(on) { for (const m of hints) m.visible = on; },
     fade(amount) { fade.material.uniforms.amount.value = amount; fade.visible = amount > 0.003; },
     vignette(strength, on) { vignette.material.uniforms.strength.value = strength; vignette.visible = on && strength > 0.02; },

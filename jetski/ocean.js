@@ -15,13 +15,13 @@ import * as THREE from 'three';
 import { SKY_SAMPLE_GLSL } from './sky.js';
 
 const WAVES = [ // direction (deg), wavelength (m), amplitude (m), steepness
-  [26, 56, 0.40, 0.10],
-  [-14, 33, 0.31, 0.14],
-  [63, 21, 0.16, 0.13],
-  [-57, 13, 0.08, 0.12],
-  [114, 8, 0.04, 0.10],
-  [-143, 5, 0.021, 0.08],
-  [165, 3.2, 0.011, 0.06],
+  [25, 62, 0.50, 0.10],
+  [-12, 37, 0.42, 0.15],
+  [62, 23, 0.20, 0.13],
+  [-58, 14.5, 0.10, 0.12],
+  [112, 9, 0.05, 0.10],
+  [-145, 5.5, 0.026, 0.08],
+  [165, 3.4, 0.013, 0.06],
 ].map(([deg, L, A, steep]) => {
   const a = THREE.MathUtils.degToRad(deg), k = (2 * Math.PI) / L;
   return { dx: Math.cos(a), dz: Math.sin(a), k, w: Math.sqrt(9.81 * k), A, steep, f0: L * 3.5, f1: L * 7 };
@@ -217,7 +217,8 @@ export function createOcean({ sky, landTexture, landBounds, landDist }) {
         // the green; what is left where it is deep is the sea's own blue.
         float path = depth * (1.0 + 1.0 / max(cosR, 0.4));
         vec3 T = exp(-vec3(0.85, 0.21, 0.15) * path);
-        vec3 lit = vec3(1.0, 0.97, 0.91) * mix(0.34, 1.15, sun);
+        // At sunset the water under the surface is lit mostly by the sky.
+        vec3 lit = skyLight * 0.75 + sunLight * 0.18 * sun;
         vec3 body = (bedCol * T + vec3(0.004, 0.058, 0.130) * (1.0 - T)) * lit;
         // Light glowing through the crests that stand between you and the sun.
         vec3 Lh = normalize(vec3(sunDir.x, 0.0, sunDir.z));
@@ -232,7 +233,7 @@ export function createOcean({ sky, landTexture, landBounds, landDist }) {
         vec4 refl = skySample(R);
         float horizon = cover * 1.3;
         float landRefl = (1.0 - smoothstep(horizon - 0.14, horizon + 0.1, R.y)) * smoothstep(0.03, 0.2, cover);
-        vec3 rockRefl = mix(vec3(0.16, 0.22, 0.13), vec3(0.44, 0.42, 0.36), smoothstep(0.05, 0.6, R.y)) * (0.45 + 0.55 * sun);
+        vec3 rockRefl = mix(vec3(0.16, 0.22, 0.13), vec3(0.44, 0.42, 0.36), smoothstep(0.05, 0.6, R.y)) * (skyLight * 1.1 + sunLight * 0.3 * sun);
         vec3 col = mix(body, mix(refl.rgb * 0.9, rockRefl, landRefl), F);
 
         // Sun glitter: sharp sparks near you, a broad road of them far off.
@@ -252,7 +253,7 @@ export function createOcean({ sky, landTexture, landBounds, landDist }) {
         vec3 foamLit = skyLight * 0.95 + sunLight * 0.36 * sun;
         col = mix(col, foamLit, foam);
 
-        col = applyHaze(col, dist);
+        col = applyHaze(col, dist, -V);
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

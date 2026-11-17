@@ -79,17 +79,32 @@ export function makeJetski(paintColor, env, { riser = SEAT.riser, below = SEAT.b
     grips[0].position.set(-half, 0, 0);
     grips[1].position.set(half, 0, 0);
     bar.add(grips[0], grips[1]);
-    // The riser: a stem and a clamp between the old bar mount and the bar.
+    // The riser: a steering column from the hull up to the raised bar, with
+    // a rubber boot where it goes into the hull, a clamp and a pad. Where the
+    // hull is under the bar is found by casting a ray down onto the model,
+    // so the column always reaches it.
     if (riser > 0.02) {
-      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.042, riser + 0.1, 12), mats.dark);
-      stem.position.set(0, -riser / 2 - 0.05, 0.035);
-      stem.rotation.x = -0.18;
-      const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.045, 0.07), mats.dark);
+      const tilt = 0.2; // the column leans back toward the rider at the top
+      const down = new THREE.Vector3(0, -Math.cos(tilt), -Math.sin(tilt)); // bar space: down and forward
+      root.updateMatrixWorld(true);
+      const from = bar.localToWorld(new THREE.Vector3(0, -0.06, 0));
+      const dirW = down.clone().transformDirection(bar.matrixWorld);
+      const hit = new THREE.Raycaster(from, dirW, 0, riser + 0.8).intersectObject(model, true)
+        .find((h) => h.object !== barMesh);
+      const len = (hit ? hit.distance : riser + 0.15) + 0.06 + 0.04; // into the hull a little
+      const column = new THREE.Group();
+      column.rotation.x = tilt; // its foot forward, along the ray
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.046, len, 14), mats.dark);
+      stem.position.y = -len / 2;
+      const boot = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.085, 0.11, 14), mats.seat);
+      boot.position.y = -len + 0.07;
+      column.add(stem, boot);
+      const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.075), mats.dark);
       clamp.position.set(0, -0.035, 0.012);
       const pad = new THREE.Mesh(new THREE.CapsuleGeometry(0.026, 0.12, 4, 10), mats.trim);
       pad.rotation.z = Math.PI / 2;
       pad.position.set(0, 0.008, 0.004);
-      bar.add(stem, clamp, pad);
+      bar.add(column, clamp, pad);
     }
     eye.set(0, bar.position.y + below, 0);
   }

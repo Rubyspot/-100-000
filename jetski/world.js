@@ -277,14 +277,37 @@ function makeRockTexture() {
   return tex;
 }
 
+// Scanned relief for the stone and the sand (assets/stone, CC0): an upright
+// cliff face for the sides of the rock, rough stone for its tops and grit for
+// the beaches. Flat if they can't load.
+function flatNormal() {
+  const t = new THREE.DataTexture(new Uint8Array([128, 128, 255, 255]), 1, 1, THREE.RGBAFormat);
+  t.needsUpdate = true;
+  return t;
+}
+export async function loadWorldTextures() {
+  const loader = new THREE.TextureLoader();
+  const one = (file) => loader.loadAsync(new URL('./assets/stone/' + file, import.meta.url).href).then((t) => {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 4;
+    return t;
+  }).catch(() => flatNormal());
+  const [cliff, rough, grain] = await Promise.all(['cliff-normal.webp', 'rough-normal.webp', 'grain-normal.webp'].map(one));
+  return { cliff, rough, grain };
+}
+
 // Rock, sand, leaves, bark and props, lit by the sun and sky with baked shadows.
 // `like` makes the variant for the mesh that holds the plants: the same
 // uniforms, plus the ragged outline of the leaf clumps (kept out of the rock's
 // shader, where a discard would cost the whole landscape its early depth test).
-function makeTerrainMaterial(sky, noiseMap, like = null) {
+function makeTerrainMaterial(sky, noiseMap, like = null, textures = null) {
+  const T = textures || {};
   return new THREE.ShaderMaterial({
     defines: like ? { CUT_LEAVES: 1 } : {},
-    uniforms: like ? like.uniforms : { ...sky.uniforms, noiseMap: { value: noiseMap }, rockMap: { value: makeRockTexture() }, camPos: { value: new THREE.Vector3() } },
+    uniforms: like ? like.uniforms : {
+      ...sky.uniforms, noiseMap: { value: noiseMap }, rockMap: { value: makeRockTexture() }, camPos: { value: new THREE.Vector3() },
+      cliffMap: { value: T.cliff || flatNormal() }, roughMap: { value: T.rough || flatNormal() }, grainMap: { value: T.grain || flatNormal() },
+    },
     vertexShader: /* glsl */`
       attribute vec3 color; attribute vec3 bake;
       varying vec3 vWorld; varying vec3 vColor; varying vec3 vBake; varying vec3 vRound;
@@ -296,6 +319,7 @@ function makeTerrainMaterial(sky, noiseMap, like = null) {
     fragmentShader: SKY_SAMPLE_GLSL + /* glsl */`
       #define ROCK_SLOPE ${ROCK_SLOPE.toFixed(2)}
       uniform sampler2D noiseMap; uniform sampler2D rockMap; uniform vec3 camPos;
+      uniform sampler2D cliffMap; uniform sampler2D roughMap; uniform sampler2D grainMap;
       uniform vec3 sunLight; uniform vec3 skyLight; uniform vec3 bounceLight;
       varying vec3 vWorld; varying vec3 vColor; varying vec3 vBake; varying vec3 vRound;
       void main() {
@@ -308,9 +332,9 @@ function makeTerrainMaterial(sky, noiseMap, like = null) {
         float isSand = step(2.5, kind) * (1.0 - step(3.5, kind));
         float isBark = step(3.5, kind);
         // Rock is a smooth shape that keeps some of each facet's own slant,
-        // so the stone still breaks along planes; sand, bark and leaf
-        // clumps are smooth.
-        vec3 N = normalize(mix(Nf, Nv, 0.6 * isRock + isSand + isBark + isLeaf));
+        // so the stone still breaks along planes; sand, bark, leaf clumps
+        // and the inflatables are smooth.
+        vec3 N = normalize(mix(Nf, Nv, 0.6 * isRock + isSand + isBark + isLeaf + isPlain));
         vec3 Nbase = N;
 
         // The relief texture, laid on from the three sides and blended.
@@ -334,11 +358,31 @@ function makeTerrainMaterial(sky, noiseMap, like = null) {
         float lower = smoothstep(0.95, 1.0, bed), upper = 1.0 - smoothstep(0.0, 0.05, bed);
         float beds = steep * smoothstep(0.45, 0.7, big.b) * smoothstep(0.35, 0.6, n.a) * isRock;
         N = normalize(N - bump * (2.0 * ROCK_SLOPE) * rough * isRock + vec3(0.0, (lower - upper) * 0.6 * beds, 0.0));
+        // Scanned relief up close: an upright cliff face on the sides of the
+        // rock, rough stone on its tops, grit in the sand. Cracks and hollows
+        // in it are darker.
+        // Two sizes on the sides: the cliff's runnels and ribs, about a
+        // metre and a half to a tile, and rough grit on them, under a metre.
+        float camDist = length(camPos - vWorld);
+        float nearK = 1.0 - smoothstep(45.0, 150.0, camDist), fineK = 1.0 - smoothstep(12.0, 45.0, camDist);
+        vec3 c1 = texture2D(cliffMap, vWorld.zy * 0.55).xyz * 2.0 - 1.0;
+        vec3 c3 = texture2D(cliffMap, vWorld.xy * 0.55 + 0.43).xyz * 2.0 - 1.0;
+        vec3 f1 = texture2D(roughMap, vWorld.zy * 1.25 + 0.21).xyz * 2.0 - 1.0;
+        vec3 f3 = texture2D(roughMap, vWorld.xy * 1.25 + 0.67).xyz * 2.0 - 1.0;
+        vec3 c2 = texture2D(roughMap, vWorld.xz * 0.6).xyz * 2.0 - 1.0;
+        f1 = mix(vec3(0.0, 0.0, 1.0), f1, fineK); f3 = mix(vec3(0.0, 0.0, 1.0), f3, fineK);
+        vec3 dn = vec3(0.0, c1.y + f1.y * 0.7, c1.x + f1.x * 0.7) * w.x + vec3(c2.x, 0.0, c2.y) * w.y + vec3(c3.x + f3.x * 0.7, c3.y + f3.y * 0.7, 0.0) * w.z;
+        float cav = mix(1.0, smoothstep(0.45, 0.97, (c1.z * f1.z) * w.x + c2.z * w.y + (c3.z * f3.z) * w.z), nearK);
+        vec3 gr = texture2D(grainMap, vWorld.xz * 0.7).xyz * 2.0 - 1.0;
+        N = normalize(N + dn * (1.15 * nearK * isRock) + vec3(gr.x, 0.0, gr.y) * (0.5 * nearK * isSand));
 
         vec3 rock = vColor * mix(vec3(0.86, 0.89, 0.95), vec3(1.12, 1.03, 0.90), big.r);
         rock *= 1.0 + (fract(sin(floor(sy) * 12.9898) * 43758.5453) - 0.5) * 0.14 * steep;
         rock *= 1.0 - 0.3 * (lower + upper) * beds;
         rock *= mix(1.0, 0.3 + 0.7 * n.b, rough) * (0.9 + 0.2 * n.a);
+        rock *= 0.42 + 0.64 * cav;
+        // Rain runs down the runnels of the cliff and stains them.
+        rock *= 1.0 - 0.28 * smoothstep(0.18, 0.55, abs(c1.x) * w.x + abs(c3.x) * w.z) * nearK * steep;
         float streak = texture2D(noiseMap, vec2(dot(vWorld.xz, vec2(0.7, 0.71)) * 0.075, vWorld.y * 0.011)).b;
         rock *= mix(1.0, 0.52 + 0.55 * streak, steep * (0.35 + 0.65 * big.g));
         rock = mix(rock, rock * vec3(1.14, 0.88, 0.64), smoothstep(0.62, 0.9, big.b) * 0.55);
@@ -351,6 +395,7 @@ function makeTerrainMaterial(sky, noiseMap, like = null) {
         rock = mix(rock, vec3(0.80, 0.77, 0.66), tide * 0.35 * steep);
 
         vec3 sand = vColor * (0.9 + 0.2 * n.a) * (0.96 + 0.08 * sin(vWorld.x * 2.1 + big.r * 6.0));
+        sand *= mix(1.0, 0.8 + 0.24 * smoothstep(0.55, 1.0, gr.z), nearK);
         sand = mix(sand, sand * vec3(0.72, 0.70, 0.64), 1.0 - smoothstep(0.1, 0.5, vWorld.y + (n.a - 0.5) * 0.2));
         // Bark: ring scars up the trunk.
         float ring = smoothstep(0.0, 0.35, abs(fract(vWorld.y * 2.6 + n.a * 0.3) - 0.5) * 2.0);
@@ -382,7 +427,8 @@ function makeTerrainMaterial(sky, noiseMap, like = null) {
         vec3 Nl = normalize(Nv + vec3(0.0, 0.3, 0.0) + (vec3(cl.r, cl.a, cl.g) - 0.5) * 1.1);
         float ndlLeaf = max(dot(Nl, sunDir), 0.0) * 0.8 + 0.2;
         ndl = mix(ndl, ndlLeaf, isLeaf);
-        ndl = mix(ndl, max(dot(Nf, sunDir) * 0.6 + 0.4, 0.0), isPlain);
+        // Inflatables: wrapped light, as their skin is a little translucent.
+        ndl = mix(ndl, max(dot(N, sunDir) * 0.75 + 0.25, 0.0), isPlain);
         vec3 light = sunLight * ndl * vBake.x
           + skyLight * (0.6 + 0.4 * N.y) * vBake.y
           + bounceLight * (0.5 - 0.5 * N.y) * (0.35 + 0.65 * vBake.x);
@@ -390,13 +436,18 @@ function makeTerrainMaterial(sky, noiseMap, like = null) {
         // comes from the side away from the sun, so the broken faces of a
         // wall in shade still show.
         float fill = max(dot(N, normalize(vec3(-sunDir.x, 0.35, -sunDir.z))), 0.0);
-        light += vec3(0.19, 0.18, 0.16) * (1.0 - vBake.x) * (0.55 + 0.45 * vBake.y) * mix(1.0, 0.25 + 1.2 * fill, isRock) * (1.0 - isPlain);
-        // Turquoise light off the water on the lower rock.
-        light += vec3(0.04, 0.15, 0.14) * exp(-max(vWorld.y, 0.0) / 5.0) * (0.8 - 0.5 * N.y) * vBake.y * (1.0 - isPlain);
-        // Paint keeps its colour: a flatter light, never blown out.
-        light = mix(light, vec3(0.42) + light * 0.40, isPlain);
+        light += vec3(0.24, 0.15, 0.12) * (1.0 - vBake.x) * (0.55 + 0.45 * vBake.y) * mix(1.0, 0.25 + 1.2 * fill, isRock) * (1.0 - isPlain);
+        // Light off the water on the lower rock.
+        light += vec3(0.05, 0.06, 0.12) * exp(-max(vWorld.y, 0.0) / 5.0) * (0.8 - 0.5 * N.y) * vBake.y * (1.0 - isPlain);
+        // Paint keeps its colour: a softer light, never blown out.
+        light = mix(light, vec3(0.2) + light * 0.62, isPlain);
         vec3 col = albedo * light;
-        col = applyHaze(col, length(camPos - vWorld));
+        // Glossy PVC: the sky in it at grazing angles and a glint of the sun.
+        vec3 V = normalize(camPos - vWorld);
+        float fres = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+        float glint = pow(max(dot(N, normalize(sunDir + V)), 0.0), 90.0) * 2.2;
+        col += (skyColor(reflect(-V, N)) * fres * 0.55 + sunLight * glint * vBake.x * 0.6) * isPlain;
+        col = applyHaze(col, length(camPos - vWorld), vWorld - camPos);
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -469,7 +520,7 @@ function makeFrondMaterial(sky, camPos) {
           + skyLight * (0.6 + 0.4 * N.y)
           + bounceLight * (0.5 - 0.5 * N.y);
         vec3 col = t.rgb * vTint * light;
-        col = applyHaze(col, length(camPos - vWorld));
+        col = applyHaze(col, length(camPos - vWorld), vWorld - camPos);
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -494,7 +545,7 @@ function makeBannerTexture(lines, bg, fg, font) {
 
 // ---------- build ----------
 
-export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
+export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = null }) {
   seed = 4242;
   const group = new THREE.Group();
 
@@ -611,7 +662,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   const deco = new Builder();      // arches of rock, leaves, trunks, props: lit only
   const leafSpots = [];            // [x, y, z, size] where bushes grow
   const palmSpots = [];            // [x, y, z, lean direction, size]
-  const rockA = C(0xa9a59b), rockB = C(0xc7bca4), rockTop = C(0x6f7f4a);
+  const rockA = C(0x9a968d), rockB = C(0xbbb09a), rockTop = C(0x6f7f4a);
   const sandA = C(0xf3e2b8), sandB = C(0xe9d3a0);
   const tmpC = new THREE.Color();
   const rockColor = (x, y, z) => tmpC.copy(rockA).lerp(rockB, fbm3(x * 0.05, y * 0.08, z * 0.05, 2));
@@ -626,7 +677,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
       let ext = cols.map((k, c) => Math.min(bankExtent(k, side, 46), half[k] + 14 + 30 * fbm2(c * 0.035 + side * 7.1 + s.a, 2.2)));
       ext = ext.map((_, c) => { let m = 1e9; for (let o = -5; o <= 5; o++) m = Math.min(m, ext[clamp(c + o, 0, ext.length - 1)]); return m; });
       ext = ext.map((_, c) => { let a = 0, n = 0; for (let o = -4; o <= 4; o++) { a += ext[clamp(c + o, 0, ext.length - 1)]; n++; } return a / n; });
-      const ROWS = 19;
+      const FACE = 14, ROWS = 5 + FACE + 6; // waterline, the face, the top
       const base = land.count;
       cols.forEach((k, c) => {
         const p = pts[k], r = rights[k], e = wallF[k];
@@ -641,8 +692,8 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
           [1.3, -4], [1.05, -0.4], [0.95, Math.min(0.75, 0.25 * T)], [-0.1, Math.min(1.9, 0.5 * T)], [0.1, y4],
         ];
         const ph = c * 0.4 + side;
-        for (let j = 1; j <= 8; j++) {
-          const f = j / 8;
+        for (let j = 1; j <= FACE; j++) {
+          const f = j / FACE;
           rows.push([0.1 + 4.2 * Math.pow(f, 2.3) + 0.4 * Math.sin(f * 8 + ph), lerp(y4, T, Math.pow(f, 0.85))]);
         }
         const topOff = rows[rows.length - 1][0];
@@ -658,16 +709,16 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
           // Bulges, vertical ribs and roughness. At the water the wall only
           // moves away from the channel, so the riding width stays clear.
           let d = (fbm3(x * 0.1, y * 0.1, z * 0.1, 3) - 0.5) * 3.0;
-          if (j >= 5 && j <= 12) d += (noise2(c * 0.33 + side * 11, y * 0.05) - 0.5) * 1.5;
+          if (j >= 5 && j < 5 + FACE) d += (noise2(c * 0.33 + side * 11, y * 0.05) - 0.5) * 1.5 + (fbm3(x * 0.34, y * 0.34, z * 0.34, 2) - 0.5) * 0.9;
           if (j <= 4) d = Math.max(0, d) * 0.5;
           if (j >= ROWS - 2) d = 0;
           x += r.x * side * d; z += r.z * side * d;
           if (j >= 5 && j < ROWS - 2) y += (noise3(x * 0.23, y * 0.23, z * 0.23) - 0.5) * Math.min(1.4, T * 0.12);
           const col = rockColor(x, y, z);
-          if (j >= 13 && j <= 15) col.lerp(rockTop, 0.5);
+          if (j >= 5 + FACE && j <= 7 + FACE) col.lerp(rockTop, 0.5);
           land.vert(x, y, z, col, 0);
-          if ((j === 13 || j === 14 || j === 12) && T > 4 && rnd() < 0.3) leafSpots.push([x, y, z, 1.8 + rnd() * 2.4]);
-          if (j === 15 && T > 6 && rnd() < 0.15) leafSpots.push([x, y, z, 1.5 + rnd() * 1.5]);
+          if (j >= 4 + FACE && j <= 6 + FACE && T > 4 && rnd() < 0.3) leafSpots.push([x, y, z, 1.8 + rnd() * 2.4]);
+          if (j === 7 + FACE && T > 6 && rnd() < 0.15) leafSpots.push([x, y, z, 1.5 + rnd() * 1.5]);
         }
       });
       // Seen from the channel, the right wall's columns run to the left and
@@ -687,7 +738,8 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   const solids = []; // { x, z, r } for placing things; collisions use the distance field
   // A limestone tower: undercut at the waterline, steep sides, green crown.
   function addStack(x, z, r, h, { segs = 0, squash = 1, leaves = 0.26 } = {}) {
-    const SEG = segs || Math.max(20, Math.min(64, Math.round(r * 2.1)));
+    const SEG0 = segs || Math.max(20, Math.min(64, Math.round(r * 2.1)));
+    const SEG = Math.round(SEG0 * 1.35);
     // Karst: undercut where the sea eats it, near-vertical sides almost to
     // the top, then a rounded crown.
     const prof = [ // [height (m below 3.2, fraction of h above), radius factor]
@@ -695,7 +747,10 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
       [0.13, 1.10], [0.22, 1.12], [0.32, 1.10], [0.42, 1.08], [0.52, 1.05], [0.62, 1.02], [0.71, 0.97], [0.79, 0.90],
       [0.86, 0.79], [0.91, 0.64], [0.95, 0.46], [0.98, 0.25], [1.0, 0.0],
     ];
+    // A row between each two on the face, so its breaks are finer.
+    for (let j = 11; j >= 5; j--) prof.splice(j + 1, 0, [(prof[j][0] + prof[j + 1][0]) / 2, (prof[j][1] + prof[j + 1][1]) / 2]);
     const ROWS = prof.length, base = land.count, ph = rnd() * 50;
+    const leafK = SEG0 / SEG; // as many plants as before on the finer mesh
     for (let k = 0; k < SEG; k++) {
       const th = (k / SEG) * Math.PI * 2;
       const cs = Math.cos(th), sn = Math.sin(th) * squash;
@@ -715,8 +770,8 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
         const col = rockColor(px, y, pz);
         if (j >= ROWS - 6) col.lerp(rockTop, 0.5);
         land.vert(px, y, pz, col, 0);
-        if (j >= ROWS - 6 && j < ROWS - 1 && rnd() < leaves) leafSpots.push([px, y, pz, Math.min(4.2, 1.4 + r * 0.07 + rnd() * 1.8)]);
-        if (j >= 6 && j < ROWS - 6 && rnd() < leaves * 0.11) leafSpots.push([px, y, pz, 1.2 + rnd()]);
+        if (j >= ROWS - 6 && j < ROWS - 1 && rnd() < leaves * leafK) leafSpots.push([px, y, pz, Math.min(4.2, 1.4 + r * 0.07 + rnd() * 1.8)]);
+        if (j >= 6 && j < ROWS - 6 && rnd() < leaves * 0.11 * leafK * 0.5) leafSpots.push([px, y, pz, 1.2 + rnd()]);
       }
     }
     land.grid(base, ROWS, SEG, true);
@@ -801,7 +856,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   for (const cp of ARCH_CPS) {
     const k = idxOfCp(cp), p = pts[k], t = tans[k], r = rights[k];
     const span = half[k] + 3.2, top = 11.5, thick = 4.5, depth = 7;
-    const U = 22, V = 10, base = deco.count, ph = rnd() * 20;
+    const U = 48, V = 18, base = deco.count, ph = rnd() * 20;
     for (let u = 0; u <= U; u++) {
       const a = (u / U) * Math.PI;                       // from the right wall over to the left
       const cx = Math.cos(a) * span, cy = 3 + Math.sin(a) * (top - 3);
@@ -813,10 +868,10 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
         let lat = cx + nx * ro, y = cy + ny * ro * 1.25;
         const along = al;
         let x = p.x + r.x * lat + t.x * along, z = p.z + r.z * lat + t.z * along;
-        const d = (fbm3(x * 0.16 + ph, y * 0.16, z * 0.16, 3) - 0.5) * 2.4;
+        const d = (fbm3(x * 0.16 + ph, y * 0.16, z * 0.16, 3) - 0.5) * 2.4 + (fbm3(x * 0.45, y * 0.45 + ph, z * 0.45, 2) - 0.5) * 0.7;
         if (ro > 0.4) { x += r.x * nx * d + t.x * Math.sin(b) * d * 0.6; z += r.z * nx * d + t.z * Math.sin(b) * d * 0.6; y += ny * Math.abs(d) * 0.8; }
         deco.vert(x, y, z, rockColor(x, y, z), 0);
-        if (ny > 0.7 && ro > thick * 0.8 && rnd() < 0.5) leafSpots.push([x, y + 0.3, z, 1.3 + rnd() * 1.3]);
+        if (ny > 0.7 && ro > thick * 0.8 && rnd() < 0.5 * (22 * 10) / (U * V)) leafSpots.push([x, y + 0.3, z, 1.3 + rnd() * 1.3]);
       }
     }
     for (let u = 0; u < U; u++) for (let v = 0; v < V; v++) {
@@ -1168,12 +1223,12 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
       const th = (a / 24) * Math.PI;
       return new THREE.Vector3(p.x + r.x * Math.cos(th) * hw, Math.sin(th) * height, p.z + r.z * Math.cos(th) * hw);
     }));
-    const SEG = 48;
-    deco.add(new THREE.TubeGeometry(path, SEG, tube, 8, false), null, white, 1, (v, c, i) => {
-      c.copy(stripes[(Math.floor(i / 9 / 4) + g) % (g === 0 ? 3 : 2)]);
+    const SEG = 72, RAD = 12; // six rings to a stripe
+    deco.add(new THREE.TubeGeometry(path, SEG, tube, RAD, false), null, white, 1, (v, c, i) => {
+      c.copy(stripes[(Math.floor(i / (RAD + 1) / 6) + g) % (g === 0 ? 3 : 2)]);
     });
     for (const s of [-1, 1]) {
-      deco.add(new THREE.CylinderGeometry(tube * 2.1, tube * 2.4, 1.5, 12), M4(p.x + r.x * s * hw, 0.25, p.z + r.z * s * hw), s < 0 ? pink : yellow);
+      deco.add(new THREE.CylinderGeometry(tube * 2.1, tube * 2.4, 1.5, 28), M4(p.x + r.x * s * hw, 0.25, p.z + r.z * s * hw), s < 0 ? pink : yellow);
     }
     gates.push({ idx: k, u: k / SAMPLES, pos: p.clone(), tan: t.clone(), right: r.clone(), half: hw, height });
   });
@@ -1204,12 +1259,12 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   // Beach life on the lagoon island and the start beach: parasols, boards, a hut.
   function parasol(x, z, a, b) {
     const y = Math.max(0.5, heightAt(x, z));
-    deco.add(new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6), M4(x, y + 1.25, z), cream);
-    deco.add(new THREE.ConeGeometry(1.7, 0.7, 10), M4(x, y + 2.6, z, rnd() * 3), white, 1, (v, c, i) => { c.copy(Math.floor(((Math.atan2(v.z, v.x) / Math.PI + 1) * 5)) % 2 ? a : b); });
+    deco.add(new THREE.CylinderGeometry(0.05, 0.05, 2.5, 8), M4(x, y + 1.25, z), cream);
+    deco.add(new THREE.ConeGeometry(1.7, 0.7, 30), M4(x, y + 2.6, z, rnd() * 3), white, 1, (v, c, i) => { c.copy(Math.floor(((Math.atan2(v.z, v.x) / Math.PI + 1) * 5)) % 2 ? a : b); });
   }
   function board(x, z, col) {
     const y = Math.max(0.5, heightAt(x, z));
-    deco.add(new THREE.SphereGeometry(1, 10, 6), M4(x, y + 1.0, z, rnd() * 3, 0.28, 1.15, 0.06, 0, 0.12), col);
+    deco.add(new THREE.SphereGeometry(1, 18, 10), M4(x, y + 1.0, z, rnd() * 3, 0.28, 1.15, 0.06, 0, 0.12), col);
   }
   for (const [isle, n] of [[lagoonIsle, 12], [startBeach, 5]]) {
     for (let i = 0; i < n; i++) {
@@ -1224,13 +1279,13 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   {
     // Tiki hut on the start beach.
     const x = startBeach.x + 4, z = startBeach.z - 6, y = Math.max(0.8, heightAt(x, z));
-    deco.add(new THREE.CylinderGeometry(2.2, 2.2, 2.4, 10), M4(x, y + 1.2, z), C(0xb98a56));
-    deco.add(new THREE.ConeGeometry(3.6, 2.4, 10), M4(x, y + 3.5, z), C(0xd9b86a));
+    deco.add(new THREE.CylinderGeometry(2.2, 2.2, 2.4, 20), M4(x, y + 1.2, z), C(0xb98a56));
+    deco.add(new THREE.ConeGeometry(3.6, 2.4, 20), M4(x, y + 3.5, z), C(0xd9b86a));
     deco.add(new THREE.BoxGeometry(3.4, 0.9, 0.12), M4(x, y + 1.7, z - 2.3), pink);
   }
   // Hot-air balloons over the lagoon.
   for (const [x, y, z, s, a, b] of [[40, 95, 60, 1, pink, yellow], [-250, 130, -260, 1.3, yellow, cream], [330, 110, -40, 1.1, pink, cream]]) {
-    deco.add(new THREE.SphereGeometry(9 * s, 16, 12), M4(x, y, z, 0, 1, 1.15, 1), white, 1, (v, c) => {
+    deco.add(new THREE.SphereGeometry(9 * s, 30, 18), M4(x, y, z, 0, 1, 1.15, 1), white, 1, (v, c) => {
       c.copy(Math.floor((Math.atan2(v.z, v.x) / Math.PI + 1) * 6) % 2 ? a : b);
       if (v.y < 0) { const k = 1 + (v.y / (9 * s)) * 0.55; v.x *= k; v.z *= k; }
     });
@@ -1241,10 +1296,10 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   const ramps = [];
   const rampBuilder = new Builder();
   {
-    const N = 8;
+    const N = 16;
     for (let i = 0; i <= N; i++) {
       const f = i / N, zz = -f * RAMP_LEN, y = 0.05 + f * (RAMP_LIP - 0.05);
-      const c = i % 2 ? pink : yellow;
+      const c = Math.floor(i / 2) % 2 ? pink : yellow;
       for (const [x, yy] of [[-RAMP_W / 2, -0.5], [-RAMP_W / 2, y], [RAMP_W / 2, y], [RAMP_W / 2, -0.5]]) rampBuilder.vert(x, yy, zz, c, 1);
     }
     for (let i = 0; i < N; i++) {
@@ -1258,11 +1313,12 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
     rampBuilder.idx.push(0, 2, 1, 0, 3, 2);
     // Fat side tubes.
     for (const s of [-1, 1]) {
-      const tube = new THREE.CylinderGeometry(0.42, 0.42, Math.hypot(RAMP_LEN, RAMP_LIP) + 0.4, 10);
+      const tube = new THREE.CylinderGeometry(0.42, 0.42, Math.hypot(RAMP_LEN, RAMP_LIP) + 0.4, 20);
       rampBuilder.add(tube, M4(s * (RAMP_W / 2 + 0.2), RAMP_LIP / 2 + 0.1, -RAMP_LEN / 2, 0, 1, 1, 1, -Math.PI / 2 + Math.atan2(RAMP_LIP, RAMP_LEN)), cream);
     }
   }
-  const terrainMat = makeTerrainMaterial(sky, makeNoiseTexture());
+  const terrainMat = makeTerrainMaterial(sky, makeNoiseTexture(), null, textures);
+  rampBuilder.smoothNormals([1]);
   const rampGeo = rampBuilder.geometry();
   for (const k of rampIdx) {
     const c = pts[k], t = tans[k];
@@ -1302,8 +1358,8 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
       }
     }
   }
-  const buoyGeo = new THREE.SphereGeometry(0.55, 12, 8);
-  const buoyMesh = new THREE.InstancedMesh(buoyGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), buoyPos.length);
+  const buoyGeo = new THREE.SphereGeometry(0.55, 20, 14);
+  const buoyMesh = new THREE.InstancedMesh(buoyGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0 }), buoyPos.length);
   buoyPos.forEach((b, i) => buoyMesh.setColorAt(i, b[2] < 0 ? pink : yellow));
   buoyMesh.frustumCulled = false;
   group.add(buoyMesh);
@@ -1312,18 +1368,20 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   const floats = [];
   {
     const fl = new Builder();
-    fl.add(new THREE.TorusGeometry(1.5, 0.55, 10, 22), M4(0, 0.35, 0, 0, 1, 1, 1, Math.PI / 2), pink);
+    fl.add(new THREE.TorusGeometry(1.5, 0.55, 16, 44), M4(0, 0.35, 0, 0, 1, 1, 1, Math.PI / 2), pink);
     const neck = new THREE.CatmullRomCurve3([new THREE.Vector3(0, 0.4, -1.5), new THREE.Vector3(0, 1.8, -1.9), new THREE.Vector3(0, 3.0, -1.5), new THREE.Vector3(0, 3.3, -2.1)]);
-    fl.add(new THREE.TubeGeometry(neck, 14, 0.3, 8, false), null, pink);
-    fl.add(new THREE.SphereGeometry(0.46, 10, 8), M4(0, 3.3, -2.2), pink);
-    fl.add(new THREE.ConeGeometry(0.2, 0.75, 8), M4(0, 3.12, -2.75, 0, 1, 1, 1, -Math.PI / 2 - 0.5), C(0x2a1a22));
+    fl.add(new THREE.TubeGeometry(neck, 28, 0.3, 14, false), null, pink);
+    fl.add(new THREE.SphereGeometry(0.46, 18, 12), M4(0, 3.3, -2.2), pink);
+    fl.add(new THREE.ConeGeometry(0.2, 0.75, 14), M4(0, 3.12, -2.75, 0, 1, 1, 1, -Math.PI / 2 - 0.5), C(0x2a1a22));
+    fl.smoothNormals([1]);
     const flamingo = fl.geometry();
     const du = new Builder();
-    du.add(new THREE.SphereGeometry(1.7, 14, 10), M4(0, 0.7, 0, 0, 1, 0.75, 1.15), yellow);
-    du.add(new THREE.SphereGeometry(1.0, 12, 10), M4(0, 2.3, -1.0), yellow);
-    du.add(new THREE.ConeGeometry(0.42, 0.9, 8), M4(0, 2.2, -2.15, 0, 1, 0.55, 1, -Math.PI / 2), C(0xff8a2a));
-    du.add(new THREE.SphereGeometry(0.13, 6, 6), M4(0.42, 2.62, -1.75), plum);
-    du.add(new THREE.SphereGeometry(0.13, 6, 6), M4(-0.42, 2.62, -1.75), plum);
+    du.add(new THREE.SphereGeometry(1.7, 26, 16), M4(0, 0.7, 0, 0, 1, 0.75, 1.15), yellow);
+    du.add(new THREE.SphereGeometry(1.0, 22, 14), M4(0, 2.3, -1.0), yellow);
+    du.add(new THREE.ConeGeometry(0.42, 0.9, 14), M4(0, 2.2, -2.15, 0, 1, 0.55, 1, -Math.PI / 2), C(0xff8a2a));
+    du.add(new THREE.SphereGeometry(0.13, 10, 8), M4(0.42, 2.62, -1.75), plum);
+    du.add(new THREE.SphereGeometry(0.13, 10, 8), M4(-0.42, 2.62, -1.75), plum);
+    du.smoothNormals([1]);
     const duck = du.geometry();
     const spots = [[-96, 190, 0], [-20, 188, 1], [64, 184, 0], [-170, 236, 1], [130, 240, 0], [176, 176, 1], [-250, 214, 0], [0, -196, 1], [-88, -210, 0], [150, -202, 1]];
     for (const [x, z, kind] of spots) {
@@ -1340,7 +1398,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif' }) {
   // ---------- assemble ----------
 
   land.smoothNormals([0, 3]);
-  deco.smoothNormals([0]);
+  deco.smoothNormals([0, 1]);
   const landGeo = land.geometry(), decoGeo = deco.geometry(), farGeo = far.geometry();
   bakeLight(land, landGeo);
   bakeLight(deco, decoGeo);

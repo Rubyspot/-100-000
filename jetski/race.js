@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import { createSky, SUN_DIR, HAZE_COLOR } from './sky.js';
 import { createOcean } from './ocean.js';
-import { buildWorld, PINK, YELLOW } from './world.js';
+import { buildWorld, loadWorldTextures, PINK, YELLOW } from './world.js';
 import { Craft, bumpCrafts } from './craft.js';
 import { loadJetski, makeJetski, makeGloves, makeJaneRider, makeSimpleRider, SEAT } from './models.js';
 import { createWake, createSpray, createStreaks, createConfetti } from './effects.js';
@@ -42,6 +42,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     heave: 1,              // 0 keeps the rider's view at a fixed height
     below: SEAT.below, ahead: SEAT.ahead, riser: SEAT.riser,
     steer: 1.3,            // how strongly the hands steer (1 = full lock at a 35 degree turn of the fist)
+    bill: 0.9,             // width of a bill, metres
     throttle: 'right',     // which hand is the throttle: 'right' or 'any'
     exposure: 1.0,
     ...options,
@@ -58,9 +59,11 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
   scene.add(holder); holder.add(rig); rig.add(camera);
   const listener = new THREE.AudioListener();
   camera.add(listener);
-  scene.fog = new THREE.FogExp2(HAZE_COLOR.getHex(), 0.0014);
-  scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x8f9474, 1.25));
-  const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
+  scene.fog = new THREE.FogExp2(HAZE_COLOR.getHex(), 0.0019);
+  // Sunset: lilac sky light from above, dark violet from the water, a low
+  // orange sun.
+  scene.add(new THREE.HemisphereLight(0xa99be0, 0x40324a, 1.1));
+  const sun = new THREE.DirectionalLight(0xffa868, 2.6);
   sun.position.copy(SUN_DIR).multiplyScalar(100);
   scene.add(sun);
 
@@ -87,9 +90,9 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
   const ready = (async () => {
     const fontP = loadFonts();
     const sparkP = O.splat ? import('@sparkjsdev/spark').catch(() => null) : Promise.resolve(null);
-    const [font] = await Promise.all([fontP, loadJetski(), loadGullAssets()]);
+    const [font, , , textures] = await Promise.all([fontP, loadJetski(), loadGullAssets(), loadWorldTextures()]);
     sky = createSky(renderer);
-    world = buildWorld({ sky, font });
+    world = buildWorld({ sky, font, textures });
     course = world.course;
     ocean = createOcean({ sky, landTexture: world.landTexture, landBounds: world.landBounds, landDist: world.landDist });
     scene.add(sky.dome, world.group, ocean.mesh);
@@ -120,15 +123,16 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
 
     sfx = new Sfx(listener);
     sfx.loadRecorded().catch(() => {});
+    await sfx.loadEngine(); // a small module; the engines made at the start use it
     player.wake = createWake(scene, ocean);
     jane.wake = createWake(scene, ocean);
-    spray = createSpray(scene, sky.uniforms.sunColor.value);
+    spray = createSpray(scene, sky.uniforms.sunColor.value, SUN_DIR);
     confetti = createConfetti(scene);
     streaks = O.streaks ? createStreaks(holder) : null;
     controls = createControls({ renderer, holder, rig, options: { gain: O.steer, throttleHand: O.throttle } });
     hud = createHud({ holder, camera, font, eyeY, embedded, goal: GOAL, maxCombo: MAX_COMBO });
     hud.attach(player.ski);
-    gulls = createGulls({ scene, world, ocean, sky, listener, onPickup, onMiss });
+    gulls = createGulls({ scene, world, ocean, sky, listener, billWidth: O.bill, onPickup, onMiss });
     built = true;
     resetRace();
     race.state = 'off';
@@ -481,6 +485,11 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
       // Sitting still with no throttle (holding on with the left hand only, say).
       race.noGas = xr && input.throttle < 0.05 && pc.speed < 5 ? race.noGas + dt : 0;
     }
+    // Back, on the bar, from the start line to the finish (the results have
+    // their own): held for half a second, it leaves the ride.
+    const onBike = race.state === 'ready' || race.state === 'countdown' || race.state === 'race';
+    hud.back.show(onBike);
+    if (onBike && !exiting && !pendingReset && hud.back.update(input.pointers, input.back, dt, now)) choose('exit');
 
     physics(dt, input);
 
@@ -533,6 +542,9 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     player.wake.setTint(boostK);
     player.wake.update(dt, elapsed, pc.x, pc.z, pc.yaw, pc.speed, pc.wet);
     jane.wake.update(dt, elapsed, jc.x, jc.z, jc.yaw, jc.speed, jc.wet);
+    camera.getWorldPosition(_cam);
+    const eyes = renderer.xr.isPresenting ? renderer.xr.getCamera().cameras : null;
+    spray.view(_cam, (eyes && eyes.length ? eyes[0].viewport.w : renderer.domElement.height) || 1600);
     spray.emitCraft('p', dt, pc, pw);
     spray.emitCraft('j', dt, jc, jw);
     spray.update(dt);
@@ -540,10 +552,10 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     if (streaks) streaks.update(dt, pc.speed, boostK);
     missCool -= dt;
     if (engineP) {
-      engineP.set(pc.rpm, pc.speed, pc.wet, pc.airborne, 1, boostK);
+      engineP.set(pc.rpm, pc.speed, pc.wet, pc.airborne, 1, boostK, pc.throttle);
       const dx = jc.x - pc.x, dz = jc.z - pc.z, d = Math.max(1, Math.hypot(dx, dz));
       const vr = ((jc.vx - pc.vx) * dx + (jc.vz - pc.vz) * dz) / d;
-      engineJ.set(jc.rpm, jc.speed, jc.wet, jc.airborne, clamp(1 - (vr * 2.5) / 343, 0.8, 1.2), jc.boost > 0 ? 1 : 0);
+      engineJ.set(jc.rpm, jc.speed, jc.wet, jc.airborne, clamp(1 - (vr * 2.5) / 343, 0.8, 1.2), jc.boost > 0 ? 1 : 0, jc.throttle);
       const ct = listener.context.currentTime;
       pannerJ.positionX.setTargetAtTime(jc.x, ct, 0.03);
       pannerJ.positionY.setTargetAtTime(jc.y + 0.6, ct, 0.03);
@@ -625,11 +637,13 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
 
   const ndc = new THREE.Vector2();
   function onClick(e) {
-    if (renderer.xr.isPresenting || race.state !== 'done' || !race.shown) return;
+    if (renderer.xr.isPresenting || exiting || pendingReset) return;
     const r = renderer.domElement.getBoundingClientRect();
     ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-    const c = hud.clickButtons(ndc);
-    if (c) choose(c);
+    if (race.state === 'done') {
+      const c = race.shown ? hud.clickButtons(ndc) : null;
+      if (c) choose(c);
+    } else if (hud.clickBack(ndc)) choose('exit');
   }
 
   // The race runs at 72 Hz in the headset, which leaves room for the water
@@ -691,7 +705,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     get active() { return active; },
     get state() { return race.state; },
     summary,
-    debug: { race, ai, player, jane, layout, options: O, get world() { return world; }, get gulls() { return gulls; }, get controls() { return controls; }, get hud() { return hud; }, get ocean() { return ocean; }, get sky() { return sky; }, rig, holder, respawn },
+    debug: { race, ai, player, jane, layout, options: O, get world() { return world; }, get gulls() { return gulls; }, get controls() { return controls; }, get hud() { return hud; }, get sfx() { return sfx; }, get engines() { return [engineP, engineJ]; }, get ocean() { return ocean; }, get sky() { return sky; }, rig, holder, respawn },
   };
   return api;
 }

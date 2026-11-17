@@ -1,8 +1,9 @@
 // The gulls and the money. A flock of Ilia's rigged seagull flies ahead of
 // the player along the racing line and drops $100 bills that flutter down
 // and hover over the water. A bill is Ilia's Bill_03_Gentle_Twist mesh (a
-// thin twisted sheet of paper), drawn 1.45 m wide, lit by the sun and sky
-// and turning slowly, so its twist catches the light. The trail of bills is
+// thin twisted sheet of paper) printed with his photo of a real $100 bill,
+// drawn 0.9 m wide (?bill= on the link), lit by the sun and sky and turning
+// slowly, so its twist catches the light. The trail of bills is
 // the way round the course: ride through them to pick them up (a bill that
 // is close enough flies into your hands).
 // Every bill in a row is worth $250 more than the last, up to $2,500
@@ -22,7 +23,7 @@ export const STEP_VALUE = 250;   // each step of the combo adds this to a bill
 export const GOLD_VALUE = 10000;
 const FLOCK = 5;
 const LEAD = 62;          // how far ahead of the player the flock flies, metres
-const BILL_W = 1.45;      // drawn width of a bill, metres
+const BILL_W = 0.9;       // drawn width of a bill, metres (?bill=)
 const BILL_LEN = 773.66;  // length of the bill mesh in its own units
 const SPIN = 1.5;         // a hovering bill turns this fast, rad/s
 // A bill this close to the jetski flies to the rider, metres. The reach is
@@ -109,6 +110,23 @@ function makeBillTexture() {
   return t;
 }
 
+// Ilia's real bill texture is an atlas made for the mesh's own UVs: the
+// front of the bill on the top half, the back on the bottom half, both
+// printed upside down. The GLB carries planar UVs instead (0 to 1 across
+// each face, the back mirrored so it reads left to right); fold them into
+// the atlas, the right way up.
+function atlasUv(geo) {
+  const p = geo.attributes.position, uv = geo.attributes.uv, out = new Float32Array(uv.count * 2);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let t = 0; t < p.count; t += 3) {
+    a.fromBufferAttribute(p, t); b.fromBufferAttribute(p, t + 1); c.fromBufferAttribute(p, t + 2);
+    const front = b.sub(a).cross(c.sub(a)).z >= 0;
+    for (let i = t; i < t + 3; i++) { out[i * 2] = uv.getX(i); out[i * 2 + 1] = (front ? 0.5 : 0) + 0.5 * (1 - uv.getY(i)); }
+  }
+  geo.setAttribute('uv', new THREE.BufferAttribute(out, 2));
+  return geo;
+}
+
 // The mesh comes faceted (every triangle has its own corners). A sheet of
 // paper is smooth: average the normals of the faces that meet at a point,
 // front and back kept apart.
@@ -163,12 +181,12 @@ function makeBillMaterial(sky, map, { tint = 0xffffff, sheen = 0.16, lift = 0 } 
         vec3 light = sunLight * (max(ndl, 0.0) + 0.42 * max(-ndl, 0.0))
           + skyLight * (0.6 + 0.4 * N.y)
           + bounceLight * (0.5 - 0.5 * N.y)
-          + vec3(0.04, 0.15, 0.14) * (0.8 - 0.5 * N.y);
+          + vec3(0.05, 0.06, 0.12) * (0.8 - 0.5 * N.y);
         // Print keeps its colours: a flatter light, never blown out.
         light = vec3(0.14 + lift) + light * 0.60;
         float spec = pow(max(dot(N, normalize(sunDir + V)), 0.0), 14.0) * step(0.0, ndl);
         vec3 col = albedo * light + sunLight * spec * sheen;
-        col = applyHaze(col, dist);
+        col = applyHaze(col, dist, -V);
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -179,17 +197,19 @@ function makeBillMaterial(sky, map, { tint = 0xffffff, sheen = 0.16, lift = 0 } 
 let assets = null;
 export async function loadGullAssets() {
   const loader = new GLTFLoader();
-  const [gull, bill] = await Promise.all([
+  const [gull, bill, billTex] = await Promise.all([
     loader.loadAsync(asset('../assets/seagull/seagull.glb')),
     loader.loadAsync(asset('../assets/seagull/bill.glb')),
+    new THREE.TextureLoader().loadAsync(asset('./assets/bill/bill-100.jpg')).catch(() => null),
   ]);
   let billMesh = null;
   bill.scene.traverse((o) => { if (o.isMesh && !billMesh) billMesh = o; });
-  assets = { gull, billMesh };
+  if (billTex) { billTex.colorSpace = THREE.SRGBColorSpace; billTex.anisotropy = 8; }
+  assets = { gull, billMesh, billTex };
   return assets;
 }
 
-export function createGulls({ scene, world, ocean, sky, listener, onPickup = () => {}, onMiss = () => {} }) {
+export function createGulls({ scene, world, ocean, sky, listener, billWidth = BILL_W, onPickup = () => {}, onMiss = () => {} }) {
   const course = world.course, { SAMPLES, pts, tans, rights, lineLat, step, length } = course;
   const wrapI = (i) => ((i % SAMPLES) + SAMPLES) % SAMPLES;
   const idxAt = (dist) => wrapI(Math.round(dist / step));
@@ -220,10 +240,12 @@ export function createGulls({ scene, world, ocean, sky, listener, onPickup = () 
   const total = bills.length;
 
   const billGeo = smoothBill(assets.billMesh.geometry);
-  const k = BILL_W / BILL_LEN;
+  if (assets.billTex) atlasUv(billGeo);
+  const k = billWidth / BILL_LEN;
   // The mesh as the opening places it: scaled, centred on its twist.
   const billBase = new THREE.Matrix4().compose(new THREE.Vector3(0, 0, -8.54 * k), assets.billMesh.quaternion.clone(), new THREE.Vector3(k, k, k));
-  const billTex = makeBillTexture();
+  // The drawn face is the fallback if the photo doesn't load.
+  const billTex = assets.billTex || makeBillTexture();
   const MAXI = 40;
   // The mesh is a closed sheet with a printed front and back, so only the
   // faces toward the eye are drawn.
@@ -234,6 +256,8 @@ export function createGulls({ scene, world, ocean, sky, listener, onPickup = () 
   // bright water as well as dark rock. It sits a metre behind the bill (the
   // bill is drawn clean in front of it), is never smaller than about a
   // degree, and fades as you come close.
+  // The halo shrinks less than the bill, so a smaller bill still shows from far away.
+  const glowScale = 0.5 + 0.5 * billWidth / 1.45;
   const glowTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 64;
     const g = c.getContext('2d'), grad = g.createRadialGradient(32, 32, 2, 32, 32, 32);
@@ -286,6 +310,7 @@ export function createGulls({ scene, world, ocean, sky, listener, onPickup = () 
     mixer.setTime(i * 0.13);
     flock.push({
       holder, model, mixer, fly, glide, flap: 1, mood: i * 1.7, dip: 0,
+      heading: 0, turn: 0, bank: 0, pitch: 0, flapping: true, flapT: 0.4 + i * 0.37,
       off: { along: -i * 6 + (i % 2) * 3, lat: (i - (FLOCK - 1) / 2) * 3.2, up: 9 + (i * 1.9) % 4 },
       pos: new THREE.Vector3(), vel: new THREE.Vector3(), voice: null,
     });
@@ -300,7 +325,7 @@ export function createGulls({ scene, world, ocean, sky, listener, onPickup = () 
   }
 
   const state = { money: 0, combo: 0, best: 0, taken: 0, total, lead: 0, first: 0 };
-  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _t = new THREE.Vector3(), _look = new THREE.Vector3();
+  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _t = new THREE.Vector3();
   const archDist = world.arches.map((a) => a.idx * step);
 
   function hoverPos(b, t, out) {
@@ -350,13 +375,29 @@ export function createGulls({ scene, world, ocean, sky, listener, onPickup = () 
       g.dip = Math.max(0, g.dip - dt * 3);
       g.holder.position.copy(g.pos);
       const sp = Math.hypot(g.vel.x, g.vel.z);
+      // Like a glider: banked into the turn as far as the turn needs, nose
+      // up in a climb and down in a dive.
       if (sp > 0.5) {
-        _look.set(g.pos.x + g.vel.x, g.pos.y + g.vel.y * 0.5, g.pos.z + g.vel.z);
-        g.holder.lookAt(_look);
+        const heading = Math.atan2(g.vel.x, g.vel.z);
+        let dh = heading - g.heading;
+        dh -= Math.round(dh / (Math.PI * 2)) * Math.PI * 2;
+        g.heading = heading;
+        g.turn += (dh / Math.max(dt, 1e-3) - g.turn) * Math.min(1, dt * 4);
+        const bank = Math.max(-0.95, Math.min(0.95, Math.atan((sp * g.turn) / 9.8)));
+        g.bank += (bank - g.bank) * Math.min(1, dt * 3);
+        g.pitch += (Math.max(-0.45, Math.min(0.45, Math.atan2(g.vel.y, sp) * 0.8)) - g.pitch) * Math.min(1, dt * 3);
+        g.holder.rotation.set(-g.pitch, heading, -g.bank, 'YXZ');
       }
-      // Flap to climb and to keep up, glide in between.
-      const wantFlap = g.vel.y > 0.4 || sp < 9 || Math.sin(t * 0.8 + g.mood * 1.3) > 0.1 ? 1 : 0.12;
-      g.flap += (wantFlap - g.flap) * Math.min(1, dt * 3);
+      // Gulls glide most of the time and flap in short bursts of a few
+      // beats; they flap too to climb or to catch up with the flock.
+      g.flapT -= dt;
+      if (g.flapT <= 0) {
+        g.flapping = !g.flapping;
+        g.flapT = g.flapping ? 0.8 + Math.random() * 1.1 : 1.8 + Math.random() * 3.4;
+      }
+      const behind = Math.hypot(_t.x - g.pos.x, _t.z - g.pos.z);
+      const wantFlap = g.flapping || g.vel.y > 0.7 || sp < 8 || behind > 7 ? 1 : 0.04;
+      g.flap += (wantFlap - g.flap) * Math.min(1, dt * 4);
       g.fly.setEffectiveWeight(g.flap); g.glide.setEffectiveWeight(1 - g.flap);
       g.mixer.update(dt);
       if (g.voice && Math.random() < dt * 0.22) g.voice.call(Math.random() < 0.5 ? 0 : 1);
@@ -430,7 +471,7 @@ export function createGulls({ scene, world, ocean, sky, listener, onPickup = () 
       _m.compose(b.pos, _q, _s.setScalar(scale)).multiply(billBase);
       if (b.gold) { if (ng < 6) goldMesh.setMatrixAt(ng++, _m); }
       else if (nb < MAXI) billMesh.setMatrixAt(nb++, _m);
-      if (np < MAXI + 6 && b.state <= 2) { glowPos[np * 3] = b.pos.x; glowPos[np * 3 + 1] = b.pos.y; glowPos[np * 3 + 2] = b.pos.z; glowSize[np] = b.gold ? 3.4 : 2.1; np++; }
+      if (np < MAXI + 6 && b.state <= 2) { glowPos[np * 3] = b.pos.x; glowPos[np * 3 + 1] = b.pos.y; glowPos[np * 3 + 2] = b.pos.z; glowSize[np] = (b.gold ? 3.4 : 2.1) * glowScale; np++; }
     }
     billMesh.count = nb; goldMesh.count = ng;
     billMesh.instanceMatrix.needsUpdate = true; goldMesh.instanceMatrix.needsUpdate = true;
