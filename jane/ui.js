@@ -141,7 +141,9 @@ export function makeJetskiButton(label) {
   hit.visible = false;
   group.add(hit);
 
-  let shownAt = -1, pressedAt = -1, fired = false, session = null, now = 0, spin = 0, last = 0;
+  // armed: a hand that is already where the jetski pops up doesn't press it;
+  // a touch counts once that spot has been free of hands for a moment.
+  let shownAt = -1, pressedAt = -1, fired = false, armed = false, session = null, now = 0, spin = 0, last = 0;
   const world = new THREE.Vector3();
   function press() {
     if (pressedAt >= 0 || !group.visible || shownAt < 0 || now - shownAt < 0.7) return;
@@ -168,7 +170,7 @@ export function makeJetskiButton(label) {
 
   group.userData = {
     hit,
-    show() { group.visible = true; shownAt = -1; pressedAt = -1; fired = false; drawTag(); },
+    show() { group.visible = true; shownAt = -1; pressedAt = -1; fired = false; armed = false; drawTag(); },
     hide() { group.visible = false; },
     click: press, // flat preview
     onPress: null,
@@ -200,14 +202,17 @@ export function makeJetskiButton(label) {
       const ref = renderer.xr.getReferenceSpace();
       if (!s || !frame || !ref) return;
       group.getWorldPosition(world);
+      let inside = false;
       for (const src of s.inputSources) {
         if (src.hand && frame.getJointPose) {
           for (const name of TOUCH_JOINTS) {
             const joint = src.hand.get(name);
-            if (joint && touches(frame.getJointPose(joint, ref), rig)) press();
+            if (joint && touches(frame.getJointPose(joint, ref), rig)) inside = true;
           }
-        } else if (src.gripSpace && touches(frame.getPose(src.gripSpace, ref), rig)) press();
+        } else if (src.gripSpace && touches(frame.getPose(src.gripSpace, ref), rig)) inside = true;
       }
+      if (!inside) armed = true;
+      else if (armed) press();
     },
   };
   return group;

@@ -203,9 +203,10 @@ export function createHud({ holder, camera, font, eyeY, embedded = false, goal =
       sticker(g, v, 914, y, 56, n === 1 ? (r.money >= goal ? C.mint : C.yellow) : C.cream, { align: 'right', width: 8 });
     });
     if (r.money >= goal) {
-      g.save(); g.translate(250, 330); g.rotate(-0.2);
-      g.lineWidth = 8; g.strokeStyle = C.mint; g.beginPath(); g.roundRect(-190, -52, 380, 104, 20); g.stroke();
-      sticker(g, '$100,000 CLUB', 0, 2, 50, C.mint, { width: 8 });
+      // A stamp on the cash row, between its label and the figure.
+      g.save(); g.translate(436, 306); g.rotate(-0.07);
+      g.lineWidth = 6; g.strokeStyle = C.mint; g.beginPath(); g.roundRect(-160, -34, 320, 68, 16); g.stroke();
+      sticker(g, '$100,000 CLUB', 0, 2, 38, C.mint, { width: 7, maxWidth: 296 });
       g.restore();
     }
     g.font = F(600, 36); g.textAlign = 'center'; g.fillStyle = C.cream;
