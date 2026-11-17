@@ -32,6 +32,40 @@ const LAT_ACCEL = 15;                     // m/s² of cornering at full lock, at
 const CARVE = 0.18;                       // drag per unit of cornering force
 export const BOOST = 0.55;                // extra thrust while boosting
 
+// The hull seen from above (3.2 m long, 1.2 m wide, bow at z = -1.67, stern
+// at 1.49) lies inside three circles along its length. Craft bump into each
+// other with these, so hulls never overlap, nose to tail or side by side.
+const HULL_Z = [-0.9, -0.02, 0.86];
+const HULL_R = 0.85;
+
+// Pushes two craft apart where their hulls touch and takes the closing speed
+// out of them. Returns that speed (0 if they don't touch or are parting).
+export function bumpCrafts(a, b) {
+  const as = Math.sin(a.yaw), ac = Math.cos(a.yaw), bs = Math.sin(b.yaw), bc = Math.cos(b.yaw);
+  let deep = 0, nx = 0, nz = 0;
+  for (const za of HULL_Z) {
+    const ax = a.x + as * za, az = a.z + ac * za;
+    for (const zb of HULL_Z) {
+      const dx = ax - (b.x + bs * zb), dz = az - (b.z + bc * zb), d = Math.hypot(dx, dz);
+      if (d > 1e-3 && 2 * HULL_R - d > deep) { deep = 2 * HULL_R - d; nx = dx / d; nz = dz / d; }
+    }
+  }
+  if (deep <= 0) return 0;
+  // One hull deep inside the other (after a respawn, say): part them along
+  // the line between their centres, never through each other.
+  const cx = a.x - b.x, cz = a.z - b.z;
+  if (nx * cx + nz * cz < 0) {
+    const cd = Math.hypot(cx, cz);
+    if (cd > 1e-3) { nx = cx / cd; nz = cz / cd; }
+  }
+  const push = deep / 2;
+  a.x += nx * push; a.z += nz * push; b.x -= nx * push; b.z -= nz * push;
+  const rv = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz;
+  if (rv >= 0) return 0;
+  a.vx -= rv * nx * 0.6; a.vz -= rv * nz * 0.6; b.vx += rv * nx * 0.6; b.vz += rv * nz * 0.6;
+  return -rv;
+}
+
 export class Craft {
   constructor() {
     this.thrustScale = 1;
