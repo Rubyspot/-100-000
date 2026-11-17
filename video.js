@@ -6,98 +6,251 @@
 import * as THREE from 'three';
 
 // Streams the video as fragmented MP4 segments through Media Source Extensions,
-// so no single file has to fit GitHub's 100 MB limit. `base` holds
-// manifest.json ({ mime, init, segments, duration }) written by
+// so no single file has to fit GitHub's 100 MB limit. Each folder in `bases`
+// holds manifest.json ({ label, mime, init, segments, duration }) written by
 // tools/segment-original.sh (untouched 8K HEVC master) or tools/encode-video.sh
-// (4K H.264 fallback). `bases` is tried in order; the first one the browser can
-// decode wins.
-async function attachSegments(video, bases) {
-  let manifest, base;
-  for (const b of bases) {
+// (4K H.264 copy). They are tried in order. A source is used when the browser
+// can decode it and, if another source follows it, the connection keeps up
+// with it. If it fails to decode after all, the next one takes over at the
+// same moment in the video.
+const MIN_SPEED = 1;   // a segment has to download at least this many times faster than it plays
+const GIVE_UP = 2.5;   // stop timing a segment that takes longer than this many times its length
+const MANIFEST_WAIT = 6000; // ms before a host that doesn't answer is passed over
+
+async function fetchBytes(url, signal) {
+  const r = await fetch(url, { signal });
+  if (!r.ok) throw new Error(`${r.status} for ${url}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+const nameOf = (source) => source.manifest.label || 'video';
+
+// The sources this browser can decode, in the order given. `notes` collects
+// why a source was passed over, for the ?debug label in the headset.
+async function findSources(bases, notes) {
+  // All manifests at once, so a host that is slow to answer holds nothing up.
+  const tries = await Promise.all(bases.map(async (base) => {
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), MANIFEST_WAIT);
     try {
-      const m = await (await fetch(b + 'manifest.json')).json();
-      if (window.MediaSource && MediaSource.isTypeSupported(m.mime)) { manifest = m; base = b; break; }
-      console.info(`video: skipping ${b}, can't decode ${m.mime}`);
-    } catch (e) {
-      console.info(`video: skipping ${b}`, e);
+      const r = await fetch(base + 'manifest.json', { signal: stop.signal });
+      if (!r.ok) throw new Error(`${r.status} for manifest.json`);
+      return { base, manifest: await r.json() };
+    } catch (error) {
+      return { base, error };
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+  const found = [];
+  for (const { base, manifest, error } of tries) {
+    if (error) {
+      notes.push('a source is unreachable');
+      console.info(`video: skipping ${base}`, error);
+    } else if (window.MediaSource && MediaSource.isTypeSupported(manifest.mime)) {
+      found.push({ base, manifest });
+    } else {
+      notes.push(`${nameOf({ manifest })} can't decode`);
+      console.info(`video: skipping ${base}, can't decode ${manifest.mime}`);
     }
   }
-  if (!manifest) throw new Error(`No playable video in ${bases.join(', ')}`);
-  console.info(`video: playing ${base} (${manifest.mime})`);
-  const ms = new MediaSource();
-  video.src = URL.createObjectURL(ms);
-  await new Promise((r) => ms.addEventListener('sourceopen', r, { once: true }));
-  ms.duration = manifest.duration;
-  const sb = ms.addSourceBuffer(manifest.mime);
-  const appended = () => new Promise((r) => sb.addEventListener('updateend', r, { once: true }));
-  const fetchBytes = async (name) => new Uint8Array(await (await fetch(base + name)).arrayBuffer());
+  return found;
+}
 
-  sb.appendBuffer(await fetchBytes(manifest.init));
-  await appended();
-
-  // Keep about BUDGET bytes buffered ahead of the playhead: the 8K master runs
-  // ~16 MB/s and browsers cap a SourceBuffer at a few hundred MB. Keep a little
-  // behind it too, more for the lighter 4K copy, so "back 10 s" is instant there.
-  const BUDGET = 120e6;
-  const n = manifest.segments.length, segSec = manifest.duration / n;
-  let ahead = 24, behind = 3, next = 0, busy = false, gen = 0;
-  async function pump() {
-    if (busy || ms.readyState === 'closed') return;
-    busy = true;
-    const g = gen;
+// Does the connection keep up with this source? Times its first segment, and
+// the second too if the first was slow (the page's other downloads compete
+// with it while everything loads). What it fetched goes into `have` (segment
+// index -> bytes) for the player.
+async function keepsUp({ base, manifest }, have) {
+  const segSec = manifest.duration / manifest.segments.length;
+  for (let i = 0; i < Math.min(2, manifest.segments.length); i++) {
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), GIVE_UP * segSec * 1000);
     try {
-      const end = sb.buffered.length ? sb.buffered.end(sb.buffered.length - 1) : 0;
-      if (sb.buffered.length && sb.buffered.start(0) < video.currentTime - behind - 1) {
-        sb.remove(0, video.currentTime - behind);
-        await appended();
-      }
-      if (next < n && end - video.currentTime < ahead) {
-        const i = next;
-        const bytes = await fetchBytes(manifest.segments[i]);
-        if (g !== gen) return; // the viewer skipped while this segment was loading
-        const rate = bytes.length / segSec;
-        ahead = Math.max(2 * segSec, Math.min(24, BUDGET / rate));
-        behind = rate < 8e6 ? 12 : 3;
-        try {
-          sb.appendBuffer(bytes);
+      const url = new URL(base + manifest.segments[i], location.href).href;
+      const r = await fetch(url, { signal: stop.signal });
+      if (!r.ok) throw new Error(`${r.status} for ${manifest.segments[i]}`);
+      const t0 = performance.now();
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      // The browser's own record of the download is not thrown off by a busy
+      // page; another site's file only shows its start and end there.
+      const rec = performance.getEntriesByName(url).pop();
+      const ms = rec && rec.responseEnd > 0
+        ? rec.responseEnd - (rec.responseStart || rec.startTime)
+        : performance.now() - t0;
+      const speed = segSec / Math.max(0.001, ms / 1000);
+      have.set(i, bytes);
+      console.info(`video: ${base} segment ${i} came in at ${speed.toFixed(1)}x playing speed`);
+      if (speed >= MIN_SPEED) return true;
+    } catch (e) {
+      console.info(`video: ${base} segment ${i} didn't arrive in time`, e.name || e);
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return false;
+}
+
+// Plays one source into the video element. `ready` resolves once the first
+// segment is in, or rejects if the source can't start; onFail is called if it
+// breaks after that. detach() lets go of the element.
+function streamSource(video, { base, manifest }, have = new Map(), onFail = () => {}) {
+  const ms = new MediaSource();
+  const url = URL.createObjectURL(ms);
+  let dead = false, started = false, failed = false, rejectReady;
+  const fail = (err) => {
+    if (dead || failed) return;
+    failed = true;
+    if (started) onFail(err); else rejectReady(err);
+  };
+  const onError = () => fail(video.error || new Error('video error'));
+  let pump = () => {}, onSeeking = () => {};
+
+  async function setUp() {
+    video.addEventListener('error', onError);
+    video.src = url;
+    await new Promise((r) => ms.addEventListener('sourceopen', r, { once: true }));
+    ms.duration = manifest.duration;
+    const sb = ms.addSourceBuffer(manifest.mime);
+    const appended = () => new Promise((r) => sb.addEventListener('updateend', r, { once: true }));
+
+    sb.appendBuffer(await fetchBytes(base + manifest.init));
+    await appended();
+
+    // Keep about BUDGET bytes buffered ahead of the playhead: the 8K master runs
+    // ~16 MB/s and browsers cap a SourceBuffer at a few hundred MB. Keep a little
+    // behind it too, more for the lighter 4K copy, so "back 10 s" is instant there.
+    const BUDGET = 120e6;
+    const n = manifest.segments.length, segSec = manifest.duration / n;
+    let ahead = 24, behind = 3, next = 0, busy = false, gen = 0;
+    pump = async () => {
+      if (dead || failed || busy || ms.readyState === 'closed') return;
+      busy = true;
+      const g = gen;
+      try {
+        const end = sb.buffered.length ? sb.buffered.end(sb.buffered.length - 1) : 0;
+        if (sb.buffered.length && sb.buffered.start(0) < video.currentTime - behind - 1) {
+          sb.remove(0, video.currentTime - behind);
           await appended();
-          next = i + 1;
-        } catch (e) {
-          if (e.name !== 'QuotaExceededError') throw e;
-          ahead = Math.max(2 * segSec, ahead / 2); // buffer full: retry this segment later
-          busy = false;
-          setTimeout(pump, 500);
+        }
+        if (next < n && end - video.currentTime < ahead) {
+          const i = next;
+          const bytes = have.get(i) || await fetchBytes(base + manifest.segments[i]);
+          have.delete(i);
+          if (dead || g !== gen) return; // let go of, or the viewer skipped while this segment was loading
+          const rate = bytes.length / segSec;
+          ahead = Math.max(2 * segSec, Math.min(24, BUDGET / rate));
+          behind = rate < 8e6 ? 12 : 3;
+          try {
+            sb.appendBuffer(bytes);
+            await appended();
+            next = i + 1;
+          } catch (e) {
+            if (e.name !== 'QuotaExceededError') throw e;
+            ahead = Math.max(2 * segSec, ahead / 2); // buffer full: retry this segment later
+            busy = false;
+            setTimeout(pump, 500);
+            return;
+          }
+        } else if (next >= n) {
+          if (ms.readyState === 'open' && !sb.updating) ms.endOfStream();
           return;
         }
-      } else if (next >= n) {
-        if (ms.readyState === 'open' && !sb.updating) ms.endOfStream();
+      } catch (e) {
+        fail(e);
+        return;
+      } finally {
+        busy = false;
+      }
+      setTimeout(pump, 0);
+    };
+    // A skip to a time that isn't buffered: drop what is, and load from the
+    // segment holding the new time.
+    onSeeking = async () => {
+      const t = video.currentTime;
+      for (let i = 0; i < sb.buffered.length; i++) {
+        if (t >= sb.buffered.start(i) && t < sb.buffered.end(i) - 0.3) { pump(); return; }
+      }
+      const g = ++gen;
+      while (busy || sb.updating) await new Promise((r) => setTimeout(r, 25));
+      if (dead || g !== gen) return;
+      next = Math.min(n - 1, Math.max(0, Math.floor(t / segSec)));
+      try {
+        if (sb.buffered.length) {
+          sb.remove(0, Infinity);
+          await appended();
+        }
+      } catch (e) {
+        fail(e);
         return;
       }
-    } finally {
-      busy = false;
-    }
-    setTimeout(pump, 0);
+      pump();
+    };
+    video.addEventListener('timeupdate', pump);
+    video.addEventListener('seeking', onSeeking);
+    await pump();
   }
-  // A skip to a time that isn't buffered: drop what is, and load from the
-  // segment holding the new time.
-  async function onSeeking() {
-    const t = video.currentTime;
-    for (let i = 0; i < sb.buffered.length; i++) {
-      if (t >= sb.buffered.start(i) && t < sb.buffered.end(i) - 0.3) { pump(); return; }
-    }
-    const g = ++gen;
-    while (busy || sb.updating) await new Promise((r) => setTimeout(r, 25));
-    if (g !== gen) return;
-    next = Math.min(n - 1, Math.max(0, Math.floor(t / segSec)));
-    if (sb.buffered.length) {
-      sb.remove(0, Infinity);
-      await appended();
-    }
-    pump();
+
+  const ready = new Promise((resolve, reject) => {
+    rejectReady = reject;
+    setUp().then(() => { started = true; if (!failed) resolve(); }, fail);
+  });
+  function detach() {
+    dead = true;
+    video.removeEventListener('error', onError);
+    video.removeEventListener('timeupdate', pump);
+    video.removeEventListener('seeking', onSeeking);
+    if (video.src === url) { video.removeAttribute('src'); video.load(); }
+    URL.revokeObjectURL(url);
   }
-  video.addEventListener('timeupdate', pump);
-  video.addEventListener('seeking', onSeeking);
-  await pump();
+  return { ready, detach };
+}
+
+// onSource(source, notes) is called with the source that plays ({ base,
+// manifest }) and why any others were passed over, onSwap(time) after a later
+// source took over from one that broke.
+async function attachSegments(video, bases, { onSource, onSwap } = {}) {
+  const notes = [];
+  const sources = await findSources(bases, notes);
+  if (!sources.length) throw new Error(`No playable video in ${bases.join(', ')}`);
+
+  // Start with the first source the connection keeps up with; the last one
+  // plays whatever the connection, since nothing lighter follows it.
+  let first = 0, have = new Map();
+  while (first < sources.length - 1 && !(await keepsUp(sources[first], have))) {
+    console.info(`video: this connection is too slow for ${sources[first].base}`);
+    notes.push(`${nameOf(sources[first])} too slow`);
+    first += 1;
+    have = new Map();
+  }
+
+  async function use(i, fetched) {
+    for (; i < sources.length; i += 1, fetched = undefined) {
+      const at = i;
+      const stream = streamSource(video, sources[at], fetched, (err) => {
+        // It played and then broke: carry on with the next source, if there is one.
+        console.warn(`video: ${sources[at].base} stopped working`, err);
+        notes.push(`${nameOf(sources[at])} failed`);
+        if (at + 1 >= sources.length) return;
+        const t = video.currentTime || 0;
+        stream.detach();
+        use(at + 1).then(() => onSwap?.(t), (e) => console.warn('video:', e));
+      });
+      try {
+        await stream.ready;
+        console.info(`video: playing ${sources[at].base} (${sources[at].manifest.mime})`);
+        onSource?.(sources[at], notes);
+        return;
+      } catch (err) {
+        stream.detach();
+        notes.push(`${nameOf(sources[at])} failed`);
+        console.warn(`video: ${sources[at].base} didn't start`, err);
+      }
+    }
+    throw new Error(`No playable video in ${bases.join(', ')}`);
+  }
+  await use(first, have);
 }
 
 export class Video180 {
@@ -107,6 +260,8 @@ export class Video180 {
     this.layer = null;
     this.playing = false;
     this.onEnded = null;
+    this.label = ''; // which source plays ("8K", "4K"), from its manifest
+    this.note = '';  // the same plus why others were passed over, for ?debug
 
     const video = document.createElement('video');
     video.crossOrigin = 'anonymous';
@@ -157,7 +312,19 @@ export class Video180 {
   async load() {
     const srcs = [].concat(this.src).filter(Boolean);
     if (srcs.length === 1 && /\.(mp4|webm|mov)$/i.test(srcs[0])) this.video.src = srcs[0];
-    else await attachSegments(this.video, srcs);
+    else {
+      await attachSegments(this.video, srcs, {
+        onSource: (source, notes) => {
+          this.label = source.manifest.label || '';
+          this.note = (this.label || 'video') + (notes.length ? ` (${notes.join(', ')})` : '');
+        },
+        // A source broke and the next one took over: pick up where it was.
+        onSwap: (time) => {
+          this.video.currentTime = time;
+          if (this.playing) this.video.play().catch(() => {});
+        },
+      });
+    }
   }
 
   // Call inside a user gesture (the Enter button) so later play() calls are allowed with sound.

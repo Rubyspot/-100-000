@@ -5,8 +5,9 @@
 # converted (PCM can't play through Media Source Extensions) to 320k AAC.
 # Segments break on the master's keyframes, so export it with a short GOP (1 s).
 #
-# The result is too big for GitHub Pages (~1 GB/min); host it elsewhere and
-# point main.js ORIGINAL_SRC (or ?video=<url>/) at it.
+# The result is too big for GitHub Pages (~1 GB/min), so it is committed to the
+# video-8k branch (its README says how) and main.js ORIGINAL_SRC streams it
+# from GitHub's raw file server. ?video=<url>/ plays any other copy.
 #
 #   tools/segment-original.sh master.mov [out_dir=video-original]
 set -euo pipefail
@@ -23,16 +24,19 @@ ffmpeg -hide_banner -loglevel error -y -i "$in" -map 0:v:0 -map 0:a:0? \
 read -r profile level < <(ffprobe -v error -select_streams v:0 -show_entries stream=profile,level -of csv=p=0 "$out/init.mp4" | tr ',' ' ')
 case "$profile" in Main) p=1;; "Main 10") p=2;; *) echo "unexpected HEVC profile $profile" >&2; exit 1;; esac
 has_audio=$(ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$in" | head -1)
-python3 - "$out" "hvc1.$p.6.L$level.B0" "$has_audio" <<'PY'
+width=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$out/init.mp4")
+python3 - "$out" "hvc1.$p.6.L$level.B0" "$has_audio" "$width" <<'PY'
 import json, sys, re
-out, vcodec, has_audio = sys.argv[1:4]
+out, vcodec, has_audio, width = sys.argv[1:5]
+# Tag shown on the video controls while this source plays.
+label = next((name for least, name in ((7000, "8K"), (5000, "6K"), (3500, "4K")) if int(width) >= least), "HD")
 lines = open(f"{out}/index.m3u8").read().splitlines()
 segs = [l for l in lines if l.endswith(".m4s")]
 dur = sum(float(re.match(r"#EXTINF:([\d.]+)", l).group(1)) for l in lines if l.startswith("#EXTINF"))
 codecs = vcodec + (",mp4a.40.2" if has_audio else "")
-json.dump({"mime": f'video/mp4; codecs="{codecs}"', "init": "init.mp4", "segments": segs, "duration": dur},
+json.dump({"label": label, "mime": f'video/mp4; codecs="{codecs}"', "init": "init.mp4", "segments": segs, "duration": dur},
           open(f"{out}/manifest.json", "w"), indent=1)
-print(f"{len(segs)} segments, {dur:.1f} s, {codecs}")
+print(f"{len(segs)} segments, {dur:.1f} s, {codecs}, {label}")
 PY
 rm -f "$out/index.m3u8"
 du -sh "$out"

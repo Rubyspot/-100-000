@@ -1,4 +1,5 @@
 {
+ "label": "4K",
  "mime": "video/mp4; codecs=\"avc1.640034,mp4a.40.2\"",
  "init": "init.mp4",
  "segments": [
