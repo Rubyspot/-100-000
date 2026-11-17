@@ -24,11 +24,21 @@ const num = (name, def) => {
 const USE_LOD = params.get('lod') !== '0';
 const DEBUG = params.has('debug');
 const FLY_SPEED = num('speed', 0.4); // m/s, constant
-// Untouched 8K60 HEVC master (tools/segment-original.sh), too big for GitHub
-// Pages so it's hosted separately; the 4K H.264 copy in ./video/ plays wherever
-// HEVC can't. ?video=<folder>/ forces one source.
-const ORIGINAL_SRC = '';
-const VIDEO_SRC = params.get('video') || [ORIGINAL_SRC, './video/'];
+// Untouched 8K60 HEVC master (tools/segment-original.sh): too big for GitHub
+// Pages (1 GB a site), so it lives on the video-8k branch and streams from
+// GitHub's raw file server. The headset plays it; the 4K H.264 copy in
+// ./video/ takes over where HEVC can't be decoded or the connection is too
+// slow for its 130 Mbit/s (video.js), and is all a flat screen or a phone needs.
+// ?video=8k or ?video=4k forces one; ?video=<folder>/,<folder>/ lists others.
+const ORIGINAL_SRC = 'https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/';
+const COPY_SRC = './video/';
+const IS_HEADSET = /OculusBrowser|Quest/i.test(navigator.userAgent);
+const VIDEO_SRC = (() => {
+  const named = { '8k': ORIGINAL_SRC, '4k': COPY_SRC };
+  const asked = (params.get('video') || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (asked.length) return asked.map((s) => named[s.toLowerCase()] || s);
+  return IS_HEADSET ? [ORIGINAL_SRC, COPY_SRC] : [COPY_SRC];
+})();
 // Room scan: 400k splats (Ilia, Nov 16), its floor lifted 7 cm to meet the
 // real one. ?scan=<url> and ?floor=<metres> override.
 const ROOM_URL = params.get('scan') || './assets/room-400k.sog';
@@ -727,7 +737,7 @@ function updateMusic(dt) {
   if (!musicState.target && musicState.level < 0.005 && !music.paused) music.pause();
 }
 
-const fpsLabel = makeLabel(320, 96);
+const fpsLabel = makeLabel(720, 96);
 fpsLabel.position.set(0, -0.18, -0.6);
 fpsLabel.visible = DEBUG;
 camera.add(fpsLabel);
@@ -1119,7 +1129,7 @@ renderer.setAnimationLoop((time, frame) => {
     videoControls.update(t, dt, {
       fingertips, rayHits,
       head: renderer.xr.isPresenting ? renderer.xr.getCamera() : camera,
-      paused: video.paused, time: video.currentTime, duration: video.duration,
+      paused: video.paused, time: video.currentTime, duration: video.duration, label: video.label,
     });
   } else {
     for (const p of pointers) p.line.visible = false;
@@ -1127,7 +1137,8 @@ renderer.setAnimationLoop((time, frame) => {
   if (DEBUG) {
     clock.frames++;
     if (t - clock.fpsT > 0.5) {
-      fpsLabel.userData.draw(`${Math.round(clock.frames / (t - clock.fpsT))} fps`);
+      // Frame rate, and which video source plays (and why not another).
+      fpsLabel.userData.draw(`${Math.round(clock.frames / (t - clock.fpsT))} fps${video.note ? ` · ${video.note}` : ''}`);
       clock.frames = 0; clock.fpsT = t;
     }
   }

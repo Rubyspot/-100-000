@@ -25,7 +25,7 @@ the video she comes back in the shaka pose.
   `?minpx`, `?maxpx`, `?cone`, `?behind` override them, as on the test page).
 - Open the page in Quest Browser and tap **Enter mixed reality**.
 
-URL options: `?debug` (fps label in headset), `?to=desk` (fly to the desk instead of the coffee table), `?lod=0`
+URL options: `?debug` (fps and video source label in headset), `?to=desk` (fly to the desk instead of the coffee table), `?lod=0`
 (disable Spark LoD), `?scan=<url>` (load another .sog/.spz/.ply), `?floor=0.07` (lift the room scan, metres),
 `?spot=-0.68,-1.93` (where Jane stands, room-scan x,z), `?height=1.75` (Jane's height), `?sparks=0.35`
 (share of her splats that fly as sparks when she transforms, 1 = all), `?poses=surf,new,sing` (her poses
@@ -43,22 +43,31 @@ back to a textured half sphere.
 
 While it plays, three palm-sized buttons (8.4 cm) wait within reach about 30°
 below eye level (`video-controls.js`): back 10 s, pause / play and close, with
-the playing time above them. Press one with a fingertip, or point a controller
+the playing time and the source's tag (8K or 4K) above them. Press one with a fingertip, or point a controller
 (or a pinching hand) at it and pull the trigger (pinch); on a flat screen,
 click. The plate dims while you aren't looking at it or reaching for it. Close
 goes back to the room and Jane. Skipping back re-fetches segments if needed.
 
-Two copies, tried in order (first one the browser can decode plays):
+Two copies of the video:
 
-- **Original** (`ORIGINAL_SRC` in `main.js`): the master's HEVC picture copied
-  bit for bit, cut into 2 s fMP4 segments by
-  `tools/segment-original.sh master.mov out_dir`. About 1 GB per minute, so it
-  lives on an external host (needs CORS allowing the Pages origin), not in git.
-- **Fallback** (`video/` in this repo): 4096×2048 H.264 at the source frame
+- **Original, 8K** (`ORIGINAL_SRC` in `main.js`): the master's 8000×4000,
+  60 fps HEVC picture copied bit for bit, cut into 2 s fMP4 segments by
+  `tools/segment-original.sh master.mov out_dir`. About 1 GB per minute, more
+  than GitHub Pages allows a site, so it is committed to the `video-8k` branch
+  (never merged; its README says how to replace the video) and streamed from
+  `https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/`.
+- **Copy, 4K** (`video/` in this repo): 4096×2048 H.264 at the source frame
   rate, `tools/encode-video.sh master.mov video 30M`.
 
 Both are streamed with Media Source Extensions from `manifest.json`, so no file
-exceeds GitHub's 100 MB limit. `?video=<folder>/` forces one source.
+exceeds GitHub's 100 MB limit. In the headset the 8K original plays, and the
+4K copy takes over when the browser can't decode HEVC, when the connection is
+too slow for it (it needs about 130 Mbit/s; the first segments are timed while
+the page loads), or if it stops decoding part-way, at the same moment in the
+video. A flat screen or a phone gets the 4K copy. The controls show which one
+is playing ("8K" or "4K"), and `?debug` adds why the other was passed over.
+`?video=8k` or `?video=4k` forces one (no fallback then), and
+`?video=<folder>/,<folder>/` plays other copies, tried in that order.
 
 Straight from Google Drive (file shared as "Anyone with the link"):
 `tools/fetch-drive.sh <drive share url> master.mov` downloads with resume;
