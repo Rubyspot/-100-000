@@ -6,10 +6,11 @@ bank the song's $100,000.
 
 The game is a module (`race.js`). It runs in two places:
 
-- **In the opening** (`../main.js`): after the 180 video Jane offers the ride and a toy jetski floats in front
-  of the player. Touching it starts the race in the same session; Back on the handlebar (or BACK on the
-  results board) comes back to her room, where the toy jetski is waiting at once, with the video's play
-  ball beside it, while she reacts to the result.
+- **In the opening** (`../main.js`): after the 180 video Jane offers the ride and a toy jetski stands where the
+  video's play button first stood (`sceneApi.buttonSpot`). Touching it starts the race in the same session; Back
+  on the handlebar (or BACK on the results board) comes back to her room, where the toy jetski is waiting at
+  once, with the play button beside it (the two side by side on that spot, 38 cm apart, standing still), while
+  she reacts to the result.
 - **On its own page**: `https://rubyspot.github.io/-100-000/jetski/`, **Enter VR** in Quest Browser, or the
   flat preview with the keyboard.
 

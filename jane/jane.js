@@ -3,11 +3,13 @@
 //   scene:arrived     -> she appears, welcomes the player, offers the video
 //   scene:video-start -> she steps out (the conversation is closed)
 //   scene:video-end   -> she's back, chats, offers the jetski ride: a toy
-//                        jetski floats in front of the player, touching it starts
-//                        the race (api.startJetski, in this same session)
+//                        jetski stands where the play button first stood
+//                        (api.buttonSpot), touching it starts the race
+//                        (api.startJetski, in this same session)
 //   scene:jetski-end  -> back in the room, the toy jetski is there at once,
-//                        with the video's play ball beside it, so the guest
-//                        can ride again or watch again; she reacts to the result
+//                        with the video's play button beside it, the two
+//                        side by side at that spot, so the guest can ride
+//                        again or watch again; she reacts to the result
 //   scene:session-end -> the headset session is over (Quit, or the Meta
 //                        button): she stops talking and goes
 //
@@ -42,11 +44,31 @@ export function createJane(api) {
   const jetskiBtn = makeJetskiButton('Touch to ride');
   scene.add(jetskiBtn);
   jetskiBtn.userData.onPress = () => goJetski('button');
-  // It appears within reach, straight in front of where the player is looking
-  // and below eye level (they may have sat down or moved). Straight ahead, so
-  // they touch it facing forward: the race seats them the way they face then.
+  // Where it stands (Ilia, Nov 18: the buttons must not move about; the jetski
+  // appears where the play button first stood, and after a race the two stand
+  // still side by side): the opening's button spot, at its middle after the
+  // video, to the right of it after a race with the play button on the left.
+  // It is put there once and turned to the player once.
+  let jetskiAt = 0; // metres right of the spot's middle
+  // Without that spot: within reach, straight in front of where the player is
+  // looking and below eye level (they may have sat down or moved). Straight
+  // ahead, so they touch it facing forward: the race seats them the way they
+  // face then.
   function showJetski() {
     if (st.leaving || jetskiBtn.visible || (st.phase !== 'after' && st.phase !== 'back')) return;
+    if (api.buttonSpot) {
+      // Side by side after a race, and after the video when the play button
+      // comes back by itself (no Jane to offer it).
+      const pair = st.phase === 'back' || api.autoPlayBall;
+      jetskiAt = pair ? api.buttonSpot().gap : 0;
+      const spot = api.buttonSpot(jetskiAt);
+      jetskiBtn.position.copy(spot.position);
+      jetskiBtn.userData.face(spot.eyes);
+      jetskiBtn.userData.show();
+      if (pair) showVideoBall();
+      return;
+    }
+    jetskiBtn.userData.face(null);
     const head = headWorld();
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cameraObj().getWorldQuaternion(new THREE.Quaternion())).setY(0);
     // Looking straight up or down: toward Jane instead.
@@ -62,10 +84,19 @@ export function createJane(api) {
     if (st.phase === 'back') showVideoBall();
   }
   // The play ball: beside the toy jetski when that is up (on its left, Jane
-  // stands to the right), otherwise at its own spot ahead of the guest.
+  // stands to the right), otherwise at its own spot ahead of the guest. With
+  // the opening's button spot the jetski stays where it is and the ball takes
+  // the place one gap to the left of the spot's middle (after a race), or two
+  // gaps left of the jetski when it stands in the middle (asked for after the
+  // video): side by side either way, nothing moves.
   function showVideoBall() {
     if (!api.showPlayBall) return;
     if (!jetskiBtn.visible) { api.showPlayBall(true); return; }
+    if (api.buttonSpot) {
+      const { gap } = api.buttonSpot();
+      api.showPlayBall(true, api.buttonSpot(jetskiAt - 2 * gap).position);
+      return;
+    }
     const head = headWorld();
     const dir = jetskiBtn.position.clone().sub(head).setY(0).normalize();
     const left = new THREE.Vector3(dir.z, 0, -dir.x);
