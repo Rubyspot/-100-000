@@ -2,21 +2,20 @@
 
 WebXR opening of the "$100,000" experience: mixed reality, "Seagulls Love Too"
 starts, a portal opens 1.05 m straight ahead of the player (every time, however
-the session before ended) onto a tropical garden, and a seagull glides out of it and
+the session before ended) onto the room's entrance, and a seagull glides out of it and
 lands on the bottom of its rim. A $100 bill flutters down from the ceiling to it, the
 gull jumps up, catches it, makes a level U-turn in front of the portal and flies
 back in (Ilia, Nov 18: "shouldn't fly up"; its calls fade as it goes). Then the
-player flies slowly through the portal (2.4 m at 0.3 m/s), level with a deck,
-over a flower garden toward two bamboo huts, with Ilia's 360 render of the same
-place all round. Jane stands on the deck in front of the opening between the
-huts from the first moment, singing into a microphone. On arrival she changes through a swirl of particles into her
+player flies slowly through the portal into the room scan (2.4 m at 0.3 m/s,
+from just inside the doorway), with Ilia's 360 render all round it. Jane is in
+the room from the first moment, singing into a microphone. On arrival she changes through a swirl of particles into her
 surfboard pose and, 3 s later, into the heart pose, where she stays. The video's
 play button comes up as she changes into that last pose; it starts the 180°
 video, and the song fades out when it starts. After the video she comes back in
 the heart pose (her jetski pose is the race's) and offers the jetski race, while "On My
 Own" plays quietly: a toy jetski stands where the play button was, and touching
 it starts the race ([jetski/](jetski/README.md)) in the same session. Leaving the
-race comes back to the garden and to "On My Own", where she reacts to the result,
+race comes back to the room and to "On My Own", where she reacts to the result,
 and the play button and the jetski stand side by side on that spot to watch the
 video again or ride again.
 
@@ -33,20 +32,23 @@ when the experience starts and travels with the player, and nothing moves it
 after that, the video included: a fingertip or a
 controller on it, or the trigger while pointing at it, held for 1.5 s while a
 yellow ring fills over a white one, ends the session (`?quit=95` sets the angle, `?quit=off` leaves
-it out). In the garden and during the video the player's hands are drawn as
+it out). In the room and during the video the player's hands are drawn as
 real hands (`hands.js`: the WebXR Input Profiles generic hand meshes in
 `vendor/hands/`, MIT, posed from the tracked joints); in mixed reality the real
 hands show.
 
 - three.js + [Spark 2](https://sparkjs.dev) for splats, vendored in `vendor/` (no build step).
-- `assets/stage-400k.sog`: the world past the portal, Ilia's "Home outside PLY.sog" (Nov 18; the
-  same splat as his "Room splat.html"): two bamboo huts with an opening between them, a deck in front,
-  a flower garden and palms. Cut from 3.7M to 2M splats evenly and then to 400k by local error
+- `assets/room-400k.sog`: the world past the portal, Ilia's "Room splat" scan (Nov 16; Nov 18: "back
+  to room splat") decimated from 4.4M to 400k splats, no SH, lifted 7 cm so its floor meets the real
+  one. Jane stands right of the coffee table; the landmarks (entrance, table, desk) are at the top of
+  `main.js`. The 200k, 300k and full scans are for the Jane splat test page.
+- `assets/stage-400k.sog` (`?world=stage`): Ilia's "Home outside PLY.sog" (Nov 18; the same splat
+  as his "Room splat.html"): two bamboo huts with an opening between them, a deck in front, a flower
+  garden and palms. Cut from 3.7M to 2M splats evenly and then to 400k by local error
   (`splat-transform -t 0,0.035,0 -H 0 -d 2000000`, then `--decimate-adaptive 400000`, then
   `--sog-version 2`), no SH, shifted 3.5 cm so the deck is at the real floor. Its origin is where
-  Jane stands (Ilia: "Jane position 0,0,0"); the flight's numbers are at the top of `main.js`. The
-  old room scan (`assets/room-400k.sog` and the 200k, 300k and full ones) stays for the Jane splat
-  test page.
+  Jane stands (Ilia: "Jane position 0,0,0"), and the flight comes in over the flowers and stops
+  0.35 m short of the deck's rail.
 - `assets/seagull/`: Ilia's rigged seagull with its fly loop, and the twisted bill, converted from his
   FBX files by `tools/fbx-to-glb/convert.cjs` (what it changes is in its header). The gull is painted
   with vertex colours (`tools/fbx-to-glb/gull-paint.js`) until its textures (T_Seagull_D/N,
@@ -58,9 +60,10 @@ hands show.
   the voice that makes a gull sound harsh; its wings are heard only on the hard beats.
 - `assets/seagull/bill-100.jpg`: the bill's two faces from Ilia's texture (front over back), mapped
   onto the twisted bill's front and back by `mapBillFaces` in `main.js`.
-- `assets/outside.jpg`: the 360 view all round the world, Ilia's render of the same place
-  ("Mono_NewLevelSequence1", 16000 px square equirectangular) at 6144×3072, turned with the world so
-  its palms and sky carry on from the splats. `assets/outside-8k.jpg` is the same at 8192×4096
+- `assets/outside.jpg`: the 360 view all round the world, Ilia's render ("Mono_NewLevelSequence1",
+  16000 px square equirectangular) of the place the stage splat shows, at 6144×3072, turned with the
+  world so the middle of the picture lies ahead along the flight (on the stage its palms and sky carry
+  on from the splats). `assets/outside-8k.jpg` is the same at 8192×4096
   (`?outside=./assets/outside-8k.jpg`; 128 MB of graphics memory against 72 MB). Replace the file with
   any equirectangular JPEG or PNG, or try one first with `?outside=<url>`.
 - `jane/splat-jane.js`: Jane's splat scans (150k each) and the particle transformation between them,
@@ -71,9 +74,11 @@ hands show.
 - Open the page in Quest Browser and tap **Enter mixed reality**.
 
 URL options: `?debug` (fps and video source label in headset), `?lod=0`
-(disable Spark LoD), `?scan=<url>` (load another .sog/.spz/.ply), `?floor=0` (lift the world, metres),
-`?spot=0,0` (where Jane stands, the world's own x,z), `?arrive=1.75,-0.64` (where the flight ends, the
-world's own x,z; it always heads toward the huts), `?height=1.75` (Jane's height), `?sparks=0.35`
+(disable Spark LoD), `?world=stage` (Ilia's bamboo huts and deck instead of the room), `?scan=<url>`
+(load another .sog/.spz/.ply), `?floor=0.07` (lift the world, metres; 0 on the stage),
+`?spot=-0.68,-1.93` (where Jane stands, the scan's own x,z; 0,0 on the stage), `?to=desk` (fly toward
+the room's desk instead of its coffee table), `?arrive=x,z` (where the flight ends, the scan's own
+x,z), `?height=1.75` (Jane's height), `?sparks=0.35`
 (share of her splats that fly as sparks when she transforms, 1 = all), `?poses=sing,surf,heart` (her
 poses before the video, in order), `?after=<pose>` (a pose after it; none by default), `?hold=3` (seconds on each pose),
 `?morph=2` (seconds each change takes), `?outside=<url>` (another 360 image all round; `off` keeps
@@ -112,7 +117,7 @@ the middle of the picture, 0.4 m under the eyes and 0.32 m out, turned to face
 the player (Ilia, Nov 18: "lower and on the right side 45 degrees";
 `?controls=0.4,0.32,45`).
 Press one with a fingertip, or point a controller (or a pinching hand) at it and
-pull the trigger (pinch); on a flat screen, click. Close goes back to the garden
+pull the trigger (pinch); on a flat screen, click. Close goes back to the room
 and Jane.
 
 The video is Ilia's full 2:34 cut ("$100,000 Quest.mov", Nov 18), in three
@@ -140,8 +145,8 @@ How the headset keeps the picture smooth (`video.js`):
 
 - **It loads ahead.** As soon as the opening itself is loaded, well before the
   ball is touched, the video starts downloading: the best copy that would be
-  ready to play through within about 40 s on this connection, otherwise a
-  lighter one. The 8K copies are kept on disk (Cache API), so the next visit
+  ready to play through within about 40 s on this connection, otherwise the
+  lighter 8K. The 8K copies are kept on disk (Cache API), so the next visit
   streams little or nothing, and what was kept for an older video in another
   folder is deleted. `?preload=0` turns loading ahead off, and `?disk=700` sets
   the size in MB from which a copy is kept on disk (the 4K copy, 0.6 GB, stays
@@ -149,9 +154,13 @@ How the headset keeps the picture smooth (`video.js`):
 - **It picks when play is pressed.** The best copy that can play to the end
   without stalling is chosen from what is on hand and the measured speed of the
   connection.
-- **It steps down instead of stalling.** If the video stalls anyway (once for
-  over 1.5 s, or twice within 12 s), can't be decoded or won't start, a lighter
-  copy that the connection can keep up with takes over at the same moment.
+- **It steps down instead of stalling.** If the master stalls anyway (once for
+  over 1.5 s, or twice within 12 s), can't be decoded or won't start, the
+  lighter 8K takes over at the same moment.
+- **It stays on 8K** (Ilia, Nov 18: "video always 8k"). On a connection too
+  slow even for the lighter 8K, that one plays anyway and waits for what it
+  needs, instead of dropping to 4K. The 4K copy is the headset's last resort:
+  only if it can't decode the 8K at all, or its decoder gives up on both.
 
 A flat screen or a phone gets the 4K copy. The controls show which copy is
 playing, and `?debug` adds why others were passed over, plus a second line: how
@@ -186,7 +195,7 @@ from the race; `detail` is its result: money, time, won, bills, total, finished)
 
 ## Jane's poses
 
-Ilia's order (Nov 18): sing (on the deck before the player comes in), surf, then
+Ilia's order (Nov 18): sing (in the room before the player comes in), surf, then
 heart with the play button; she stays in heart after the video, and her jetski
 pose is only in the race. Yoga is no longer in the chain. Each is a 150k-splat SOG
 named after it in `assets/jane/` (`yoga-150k.sog` and so on); a pose whose file

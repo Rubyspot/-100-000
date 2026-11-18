@@ -21,7 +21,9 @@ import * as THREE from 'three';
 // - The best source that will play through without stalling is chosen when
 //   play is pressed, from what is on hand and how fast the rest is arriving.
 // - If it stalls anyway (connection or decoder), the next lighter source takes
-//   over at the same moment in the video.
+//   over at the same moment in the video. A last-resort source (the 4K copy on
+//   a headset, which is to play 8K whatever the connection) is never chosen
+//   for speed: only when the ones before it can't be decoded or break.
 const MANIFEST_WAIT = 6000; // ms before a host that doesn't answer is passed over
 const SB_AHEAD = 70e6;      // bytes buffered ahead of the playhead (Chromium caps a video buffer at 150 MB)
 const SB_TOTAL = 125e6;     // bytes buffered in all, ahead and behind
@@ -481,9 +483,10 @@ function streamSource(video, store, time, onFail = () => {}) {
 // taking over where the last one was; `first` resolves once it has something to show.
 // onDead(): the last source broke, and nothing can play.
 class Sources {
-  constructor(video, bases, { keepFrom, known, onSource, onSwap, onDead } = {}) {
+  constructor(video, bases, { keepFrom, known, lastResort, onSource, onSwap, onDead } = {}) {
     this.video = video;
     this.bases = bases;
+    this.lastResort = lastResort || [];
     this.keepFrom = keepFrom;
     this.known = known;
     this.onSource = onSource || (() => {});
@@ -520,11 +523,21 @@ class Sources {
   }
 
   async init() {
-    this.sources = await findSources(this.bases, this.notes);
-    if (!this.sources.length) throw new Error(`No playable video in ${this.bases.join(', ')}`);
+    // The last-resort folders are looked up alongside and go at the end.
+    const [found, spare] = await Promise.all([findSources(this.bases, this.notes), findSources(this.lastResort, this.notes)]);
+    spare.forEach((s) => { s.lastResort = true; });
+    this.sources = [...found, ...spare];
+    if (!this.sources.length) throw new Error(`No playable video in ${[...this.bases, ...this.lastResort].join(', ')}`);
     if (this.known) await dropOldCopies(this.known);
     this.stores = this.sources.map((s) => new SegmentStore(s, { keepFrom: this.keepFrom }));
     await Promise.all(this.stores.map((s) => s.open()));
+  }
+
+  // Whether source i may load ahead or be picked: not broken, and a last
+  // resort only once every source before it has broken (or none could decode).
+  usable(i) {
+    if (this.stores[i].failed) return false;
+    return !this.sources[i].lastResort || this.sources.every((s, j) => s.lastResort || this.stores[j].failed);
   }
 
   // How fast source i would load on this connection, in playing speeds
@@ -564,7 +577,7 @@ class Sources {
     const full = this.stores.findIndex((st) => st.complete);
     let target = -1;
     for (let i = 0; i < (full < 0 ? this.stores.length : full); i++) {
-      if (this.stores[i].failed) continue;
+      if (!this.usable(i)) continue;
       target = i;
       const need = this.need(i);
       // Nothing measured yet: start with the best and find out. The one being
@@ -598,6 +611,7 @@ class Sources {
     let first = -1, lightest = 0, measured = false;
     for (let i = 0; i < this.stores.length; i++) {
       if (this.stores[i].failed) { this.notes.push(`${nameOf(this.sources[i])} failed`); continue; }
+      if (!this.usable(i)) continue;
       if (first < 0) first = i;
       lightest = i;
       const need = this.need(i);
@@ -645,10 +659,15 @@ class Sources {
     return stream;
   }
 
-  // A lighter source takes over where this one is. False if there is none.
+  // A lighter source takes over where this one is. False if there is none
+  // (then this one carries on, waiting for what it needs). A last resort only
+  // takes over from a source that broke or won't start, not a slow one.
   stepDown(why) {
     const from = this.cur, t = this.video.currentTime || 0, lighter = [];
-    for (let i = from + 1; i < this.stores.length; i++) if (!this.stores[i].failed) lighter.push(i);
+    const slow = why === 'stalled' || why === 'too slow';
+    for (let i = from + 1; i < this.stores.length; i++) {
+      if (!this.stores[i].failed && !(slow && this.sources[i].lastResort)) lighter.push(i);
+    }
     if (from < 0 || !lighter.length) return false;
     // The next one down. When the connection is the trouble, the first one it
     // can keep up with, so the video isn't interrupted twice.
@@ -743,9 +762,12 @@ export class Video180 {
   // for while it plays (0: leave it, undefined: one that suits the video).
   // keepFrom: sources of at least this many bytes are kept on disk. known:
   // every folder whose disk copy stays (others are deleted); none: all stay.
-  constructor({ renderer, scene, src, edge = 6, hz, keepFrom = DISK_MIN, known }) {
+  // lastResort: folders played only if every one in src breaks or can't be
+  // decoded, never because the connection is slow.
+  constructor({ renderer, scene, src, edge = 6, hz, keepFrom = DISK_MIN, known, lastResort = [] }) {
     this.renderer = renderer;
     this.src = src;
+    this.lastResort = lastResort;
     this.hz = hz;
     this.keepFrom = keepFrom;
     this.known = known;
@@ -843,6 +865,7 @@ export class Video180 {
     const sources = new Sources(this.video, srcs, {
       keepFrom: this.keepFrom,
       known: this.known,
+      lastResort: this.lastResort,
       // Nothing can play (any more): back to the room.
       onDead: () => this.stop(),
       onSource: (source, notes) => {
