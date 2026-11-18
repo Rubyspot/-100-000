@@ -16,6 +16,9 @@ import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { Video180 } from './video.js';
 import { VideoControls } from './video-controls.js';
 import { GullVoice } from './audio.js';
+import { createHands } from './hands.js';
+import { createQuitButton } from './quit-button.js';
+import { createPlayButton } from './play-button.js';
 import { createJane } from './jane/jane.js';
 import { createSplatJane, JANE_SCANS } from './jane/splat-jane.js';
 
@@ -26,7 +29,7 @@ const num = (name, def) => {
 };
 const USE_LOD = params.get('lod') !== '0';
 const DEBUG = params.has('debug');
-const FLY_SPEED = num('speed', 0.4); // m/s, constant
+const FLY_SPEED = num('speed', 0.3); // m/s, constant
 // Untouched 8K60 HEVC master (tools/segment-original.sh, 130 Mbit/s): too big
 // for GitHub Pages (1 GB a site), so it lives on the video-8k branch and
 // streams from GitHub's raw file server. Next to it, in light/, is the same 8K
@@ -79,12 +82,18 @@ const TARGETS = {
   desk: { at: new THREE.Vector2(-1.63, 0.18), stop: 1.4 },  // desk in front of the window
 };
 const TARGET = TARGETS[params.get('to')] || TARGETS.table;
-const PORTAL_DIST = 1.05; // portal distance in front of the player, and from the doorway on the outside
+const PORTAL_DIST = 1.05; // portal distance in front of the player
 
-// Flight line: from just outside the doorway, through it, toward the target.
+// Flight line: from the doorway toward the target, ending TARGET.stop short
+// of it, where Jane and the play button are set up around the player. Ilia,
+// Nov 18: "shorter but slower". It is 2.4 m at 0.3 m/s (it was 3.85 m from
+// just outside the doorway at 0.4 m/s), so it now starts just inside the
+// doorway and the portal opens onto the room itself. ?fly=<metres> and
+// ?speed=<m/s> change them.
 const FLY_DIR = new THREE.Vector2().subVectors(TARGET.at, ENTRANCE).normalize();
-const SCAN_START = ENTRANCE.clone().addScaledVector(FLY_DIR, -PORTAL_DIST);
-const FLY_DIST = SCAN_START.distanceTo(TARGET.at) - TARGET.stop;
+const ARRIVAL_SCAN = TARGET.at.clone().addScaledVector(FLY_DIR, -TARGET.stop);
+const FLY_DIST = Math.max(1.2, num('fly', 2.4));
+const SCAN_START = ARRIVAL_SCAN.clone().addScaledVector(FLY_DIR, -FLY_DIST);
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -324,7 +333,6 @@ scanGroup.add(room);
 // she forms again in the jetski pose, offering the race. ?poses=yoga,surf,
 // sing,heart and ?after=jetski change them (also: new, the shaka pose). A
 // pose whose file isn't in assets/jane/ yet is skipped.
-const ARRIVAL_SCAN = TARGET.at.clone().addScaledVector(FLY_DIR, -TARGET.stop);
 const poseList = (name, def) => {
   const list = (params.get(name) || '').split(',').map((s) => s.trim()).filter((k) => JANE_SCANS[k]);
   return list.length ? list : def;
@@ -342,6 +350,8 @@ const splatJane = params.get('jane') === 'off' ? null : createSplatJane({
   morph: Math.max(0.5, num('morph', 2)),
   scans: [...JANE_POSES, JANE_AFTER].map((k) => JANE_SCANS[k]),
   chainEnd: JANE_POSES.length - 1,
+  // The play button comes up as she changes into her last pose.
+  onLastPose: () => onJaneLastPose(),
 });
 if (splatJane) {
   addEventListener('scene:arrived', () => splatJane.chain());
@@ -592,48 +602,16 @@ function setObjectMasked(masked) {
 }
 
 // ---------- hands (drawn once inside the world, where passthrough is hidden) ----------
+// Real hand meshes (hands.js), posed from the tracked joints each frame; in
+// mixed reality the real hands show instead. fingertips: index fingertips,
+// world space, for touching the buttons.
+const hands = createHands({ parent: rig });
+hands.visible = false;
+const fingertips = hands.tips;
+const tmpQuat = new THREE.Quaternion(); // scratch, for the gull's turns
 
-const JOINTS = ['wrist', 'thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip',
-  'index-finger-metacarpal', 'index-finger-phalanx-proximal', 'index-finger-phalanx-intermediate', 'index-finger-phalanx-distal', 'index-finger-tip',
-  'middle-finger-metacarpal', 'middle-finger-phalanx-proximal', 'middle-finger-phalanx-intermediate', 'middle-finger-phalanx-distal', 'middle-finger-tip',
-  'ring-finger-metacarpal', 'ring-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate', 'ring-finger-phalanx-distal', 'ring-finger-tip',
-  'pinky-finger-metacarpal', 'pinky-finger-phalanx-proximal', 'pinky-finger-phalanx-intermediate', 'pinky-finger-phalanx-distal', 'pinky-finger-tip'];
-const handMesh = new THREE.InstancedMesh(
-  new THREE.SphereGeometry(1, 10, 8),
-  new THREE.MeshStandardMaterial({ color: 0xf1d2bd, roughness: 0.6 }),
-  JOINTS.length * 2,
-);
-handMesh.frustumCulled = false;
-handMesh.visible = false;
-rig.add(handMesh);
-const fingertips = [];
-const tmpMat = new THREE.Matrix4(), tmpPos = new THREE.Vector3(), tmpQuat = new THREE.Quaternion(), tmpScale = new THREE.Vector3();
-
-function updateHands(frame) {
-  const session = renderer.xr.getSession();
-  const ref = renderer.xr.getReferenceSpace();
-  let n = 0;
-  fingertips.length = 0;
-  if (session && frame && ref && frame.getJointPose) {
-    for (const src of session.inputSources) {
-      if (!src.hand) continue;
-      for (let j = 0; j < JOINTS.length; j++) {
-        const space = src.hand.get(JOINTS[j]);
-        const pose = space && frame.getJointPose(space, ref);
-        if (!pose) continue;
-        const p = pose.transform.position, o = pose.transform.orientation;
-        tmpPos.set(p.x, p.y, p.z); tmpQuat.set(o.x, o.y, o.z, o.w);
-        tmpScale.setScalar(Math.max(0.006, pose.radius || 0.008));
-        handMesh.setMatrixAt(n++, tmpMat.compose(tmpPos, tmpQuat, tmpScale));
-        if (JOINTS[j] === 'index-finger-tip') fingertips.push(tmpPos.clone().applyMatrix4(rig.matrixWorld));
-      }
-    }
-  }
-  handMesh.count = n;
-  handMesh.instanceMatrix.needsUpdate = true;
-}
-
-// Controller rays, drawn only while they point at the video controls.
+// Controller rays, drawn only while they point at the video controls or the
+// quit button. selecting: the trigger is down.
 const pointers = [0, 1].map((i) => {
   const c = renderer.xr.getController(i);
   const line = new THREE.Line(
@@ -642,8 +620,11 @@ const pointers = [0, 1].map((i) => {
   );
   line.visible = false;
   c.add(line);
+  c.userData.tip = new THREE.Vector3();
   c.addEventListener('connected', (e) => { c.userData.source = e.data; });
-  c.addEventListener('disconnected', () => { c.userData.source = null; line.visible = false; });
+  c.addEventListener('disconnected', () => { c.userData.source = null; c.userData.selecting = false; line.visible = false; });
+  c.addEventListener('selectstart', () => { c.userData.selecting = true; });
+  c.addEventListener('selectend', () => { c.userData.selecting = false; });
   rig.add(c);
   return { c, line };
 });
@@ -651,6 +632,25 @@ const rayOf = (obj) => {
   const m = obj.matrixWorld;
   return new THREE.Ray(new THREE.Vector3().setFromMatrixPosition(m), new THREE.Vector3(0, 0, -1).transformDirection(m));
 };
+
+// ---------- quit ----------
+// A way out of the whole experience at the viewer's right (Ilia, Nov 18),
+// 95 degrees round from the way the room faces, so just past the right edge
+// of the 180 picture; held for 1.5 s it ends the session (quit-button.js).
+// It travels with the viewer and is there for the whole session, in the room
+// and during the video. ?quit=95: the angle; ?quit=off leaves it out.
+const QUIT_ANGLE = params.get('quit') === 'off' ? null : num('quit', 95);
+const quitButton = createQuitButton();
+rig.add(quitButton.root);
+const quitPointers = [];
+// head: world position of the eyes; forward: the way the experience faces.
+function placeQuit(head, forward) {
+  if (QUIT_ANGLE !== null) quitButton.place(head, forward, { angle: QUIT_ANGLE });
+}
+function quitExperience() {
+  const session = renderer.xr.getSession();
+  if (session) session.end().catch((err) => console.warn('Quit:', err));
+}
 
 // ---------- in-headset text (replay hint, debug fps) ----------
 
@@ -699,9 +699,10 @@ if (params.get('preload') !== '0') {
   });
   Promise.allSettled([unlocked, splatJane?.ready]).then(() => video.preload());
 }
-// Back 10 s, pause / play and close, within reach at the lower edge of the
-// picture for as long as the video plays. ?controls=0.3,0.43: how far below
-// and ahead of the eyes the plate's middle is, metres.
+// Back 10 s, pause / play and close, within reach under the middle of the
+// picture for as long as the video plays, low enough to be out of the view
+// (Ilia, Nov 18). ?controls=0.52,0.36: how far below and ahead of the eyes
+// the plate's middle is, metres.
 const CONTROLS_AT = (params.get('controls') || '').split(',').map(parseFloat);
 const videoControls = new VideoControls({
   scene, listener,
@@ -711,58 +712,30 @@ const videoControls = new VideoControls({
   ...(CONTROLS_AT.length === 2 && CONTROLS_AT.every(Number.isFinite) ? { below: CONTROLS_AT[0], ahead: CONTROLS_AT[1] } : {}),
 });
 
-const playBall = new THREE.Group();
-{
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.11, 48, 32), new THREE.MeshStandardMaterial({
-    color: 0xf2c45a, metalness: 0.65, roughness: 0.22, emissive: 0x3a2a05,
-  }));
-  playBall.add(ball);
-  // Play triangle, always turned toward the viewer.
-  const shape = new THREE.Shape();
-  shape.moveTo(-0.028, -0.036); shape.lineTo(0.042, 0); shape.lineTo(-0.028, 0.036); shape.closePath();
-  const icon = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  icon.position.z = 0.112;
-  const iconPivot = new THREE.Group();
-  iconPivot.add(icon);
-  playBall.add(iconPivot);
-  const halo = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.42), new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, ...GLOW_BLEND,
-    uniforms: ringMaterial.uniforms,
-    vertexShader: /* glsl */`
-      varying vec2 vPos;
-      void main() { vPos = position.xy / 0.21; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-    fragmentShader: /* glsl */`
-      uniform float time; varying vec2 vPos;
-      void main() {
-        float r = length(vPos);
-        float g = smoothstep(1.0, 0.5, r) * smoothstep(0.45, 0.55, r) * (0.55 + 0.25 * sin(time * 2.5));
-        gl_FragColor = vec4(vec3(1.0, 0.75, 0.3) * g, g);
-      }`,
-  }));
-  iconPivot.add(halo);
-  // base: where it floats (anchor space); null for its own spot past the end of the flight.
-  playBall.userData = { ball, iconPivot, pressedAt: -1, base: null };
-  playBall.visible = false;
-  anchor.add(playBall);
-}
-
-const hint = makeLabel();
-hint.userData.draw('Touch the ball to play');
-hint.scale.setScalar(0.6);
-anchor.add(hint);
+// The play button (play-button.js, Ilia, Nov 18: "look better"). It comes up
+// with Jane's last pose. playBall: where it floats, in the anchor's space.
+const playButton = createPlayButton();
+const playBall = playButton.root;
+// base: where it floats (anchor space); null for its own spot past the end of
+// the flight. hover: a hand or a controller's ray is at it.
+playBall.userData = { pressedAt: -1, base: null, shownAt: 0, hover: 0, rayOn: false };
+playBall.visible = false;
+anchor.add(playBall);
 
 function startVideo() {
   if (video.playing || !playBall.visible) return;
   video.prime(); // the player fills while the room fades
   stopMusic();
   playBall.userData.pressedAt = clock.now;
-  hint.visible = false;
+  state.lastPose = true; // from here on the button comes whenever it is asked for
   // Centre the 180 on the viewer's head, facing the way the room faces.
   const head = (renderer.xr.isPresenting ? renderer.xr.getCamera() : camera);
   head.updateMatrixWorld(true);
   const pose = new THREE.Object3D();
   pose.position.setFromMatrixPosition(head.matrixWorld);
   pose.quaternion.copy(anchor.quaternion);
+  // The quit button stays just past the right edge of the picture.
+  placeQuit(pose.position, new THREE.Vector3(0, 0, -1).applyQuaternion(pose.quaternion));
   gullVoice.setLevel(0, 0.2);
   setTimeout(() => {
     worldRoot.visible = spark.visible = false;
@@ -781,6 +754,7 @@ function startVideo() {
 video.onEnded = () => {
   videoControls.hide();
   worldRoot.visible = spark.visible = true;
+  if (!state.running) return; // the session ended under it: nobody to greet
   showPlayBall(sceneApi.autoPlayBall);
   window.dispatchEvent(new Event('scene:video-end'));
 };
@@ -964,6 +938,7 @@ function startSequence() {
   worldRoot.position.copy(anchor.position);
   worldRoot.rotation.set(0, yaw, 0);
   state.eye = THREE.MathUtils.clamp(headPos.y, 1.0, 1.9);
+  placeQuit(headPos, fwd.set(0, 0, -1).applyQuaternion(anchor.quaternion));
 
   const pz = PORTAL_Z, py = state.eye - 0.08;
   const u = gull.userData;
@@ -1013,12 +988,12 @@ function startSequence() {
   state.running = true;
   state.inside = false;
   state.arrived = false;
+  state.lastPose = false;
   state.calls = 0;
   setWorldMasked(true);
   setObjectMasked(false);
   portalMask.visible = true;
   ring.visible = true;
-  hint.visible = false;
   bill.visible = false;
   gull.visible = false;
   video.stop();
@@ -1077,7 +1052,7 @@ function update(t, dt) {
     ringMaterial.uniforms.opacity.value = 1;
   }
   fakeRoom.visible = !renderer.xr.isPresenting && !state.inside;
-  handMesh.visible = state.inside;
+  hands.visible = state.inside;
 
   // Bill: flutters down from the ceiling until the gull catches it.
   if (T >= T_BILL && T < T_GRAB) {
@@ -1207,42 +1182,59 @@ function update(t, dt) {
     gullVoice.setLevel(0, 0.3);
   }
 
-  if (sceneApi.autoPlayBall && T > T_HINT && state.inside && !playBall.visible && !video.playing && playBall.userData.pressedAt < 0) {
-    showPlayBall(true);
+  // The play button comes up with Jane's last pose. Without her splat it
+  // comes up a second after arriving (unless the conversation brings it up);
+  // if her last pose never comes (a scan still loading), after half a minute.
+  const autoAt = splatJane ? T_ARRIVE + 30 : sceneApi.autoPlayBall ? T_HINT : Infinity;
+  if (T > autoAt && state.inside && !playBall.visible && !video.playing && playBall.userData.pressedAt < 0) {
+    showPlayBall(true, null, true);
   }
   if (!renderer.xr.isPresenting && T > T_HINT) $('replay').hidden = false;
-  if (playBall.visible) updatePlayBall(T, t);
+  if (playBall.visible) updatePlayBall(T, t, dt);
 }
 
-// at: where the ball floats (world position), e.g. beside the toy jetski
-// after a race; without it, ahead of where the flight ended.
-function showPlayBall(on = true, at = null) {
+// at: where it floats (world position), e.g. beside the toy jetski after a
+// race; without it, ahead of where the flight ended. Before the video it
+// waits for Jane's last pose (Ilia, Nov 18: "at the same time with last
+// pose"), unless `now` (she was asked to play it). Asked again while it is
+// already up in the same spot, it stays as it is.
+function showPlayBall(on = true, at = null, now = false) {
   const u = playBall.userData;
-  playBall.visible = hint.visible = on;
-  if (!on) return;
+  if (!on) { playBall.visible = false; return; }
+  if (!at && !now && splatJane && !state.lastPose) return;
+  const base = at ? anchor.worldToLocal(at.clone()) : null;
+  const same = base ? u.base && u.base.distanceTo(base) < 0.05 : !u.base;
+  if (playBall.visible && u.pressedAt < 0 && same) return;
+  playBall.visible = true;
   u.shownAt = state.fixedT ?? (clock.now - state.start);
   u.pressedAt = -1;
-  u.base = at ? anchor.worldToLocal(at.clone()) : null;
-  const base = playBallBase();
-  hint.userData.draw(at ? 'Touch to watch again' : 'Touch the ball to play');
-  hint.position.set(base.x, base.y - 0.18, base.z);
+  u.base = base;
+  playButton.setText(at ? 'Watch again' : 'Play the video', 'Touch the button');
 }
 const playBallBase = () => playBall.userData.base || new THREE.Vector3(0, state.eye - 0.2, -FLY_DIST - 0.62);
 
-const ballWorld = new THREE.Vector3();
-function updatePlayBall(T, t) {
+// Jane's last pose is coming up: so does the play button.
+function onJaneLastPose() {
+  if (!state.running || state.lastPose) return;
+  state.lastPose = true;
+  if (state.inside && !video.playing && !raceBox.on && playBall.userData.pressedAt < 0) showPlayBall(true);
+}
+
+const ballWorld = new THREE.Vector3(), eyeWorld = new THREE.Vector3();
+function updatePlayBall(T, t, dt) {
   const u = playBall.userData;
-  const appear = easeOutBack(clamp01((T - u.shownAt) / 0.8));
+  const appear = clamp01((T - u.shownAt) / 0.9);
   const press = u.pressedAt > 0 ? clamp01((t - u.pressedAt) / 0.45) : 0;
   playBall.position.copy(playBallBase());
-  playBall.position.y += 0.025 * Math.sin(t * 1.6);
-  playBall.scale.setScalar(Math.max(0.0001, appear * (1 + press * 0.6)));
-  u.ball.rotation.y = t * 0.4;
-  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
-  u.iconPivot.lookAt(new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld));
-  // Poke with an index fingertip.
+  playBall.position.y += 0.02 * Math.sin(t * 1.6);
   playBall.getWorldPosition(ballWorld);
-  if (u.pressedAt < 0 && appear > 0.9 && fingertips.some((p) => p.distanceTo(ballWorld) < 0.13)) startVideo();
+  // Lights up as a fingertip (or a controller's ray) comes to it; a poke plays.
+  let near = Infinity;
+  for (const p of fingertips) near = Math.min(near, p.distanceTo(ballWorld));
+  u.hover = THREE.MathUtils.damp(u.hover, near < 0.3 || u.rayOn ? 1 : 0, 10, dt);
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  playButton.update(t, { appear, press, hover: u.hover, viewer: eyeWorld.setFromMatrixPosition(cam.matrixWorld) });
+  if (u.pressedAt < 0 && appear > 0.9 && near < 0.13) startVideo();
 }
 
 // ---------- jetski race ----------
@@ -1286,7 +1278,7 @@ function enterRace() {
   raceBox.on = true;
   stopMusic(true);
   gullVoice.setLevel(0, 0.2);
-  playBall.visible = hint.visible = false;
+  playBall.visible = false;
   $('replay').hidden = true;
   r.resize(innerWidth, innerHeight);
   r.start();
@@ -1319,7 +1311,7 @@ const sceneApi = {
   // Set false to let Jane decide when the play ball appears (showPlayBall).
   autoPlayBall: true,
   showPlayBall,
-  playVideo: () => { if (!playBall.visible) showPlayBall(true); startVideo(); },
+  playVideo: () => { if (!playBall.visible) showPlayBall(true, null, true); startVideo(); },
   // Jane's splat stands here (world position of her feet); the conversation
   // puts its caption above her instead of building the stand-in figure.
   janeSpot: splatJane ? () => splatJane.position() : null,
@@ -1359,24 +1351,50 @@ renderer.setAnimationLoop((time, frame) => {
   const inXr = renderer.xr.isPresenting, head = inXr ? renderer.xr.getCamera() : camera;
   video.update(head);
   jane.update(t, dt, frame);
-  if (inXr) updateHands(frame);
-  if (videoControls.visible) {
-    const rayHits = [];
-    for (const { c, line } of pointers) {
-      const src = c.userData.source;
-      if (!inXr || !src || src.hand || src.targetRayMode !== 'tracked-pointer') { line.visible = false; continue; }
-      const hit = videoControls.hitRay(rayOf(c));
-      line.visible = hit.near && videoControls.shown;
-      if (hit.near) line.scale.z = hit.distance;
-      rayHits.push(hit);
+  hands.update(inXr ? frame : null, renderer.xr.getReferenceSpace());
+  // Controllers point at the play button, the video's buttons and the quit
+  // button (the ray is drawn while it is on one); fingertips and controllers
+  // touch them.
+  quitButton.show(inXr && state.running && QUIT_ANGLE !== null);
+  const rayHits = [];
+  let quitPressed = false;
+  quitPointers.length = 0;
+  quitPointers.push(...fingertips);
+  playBall.userData.rayOn = false;
+  if (playBall.visible) playBall.getWorldPosition(ballWorld);
+  for (const { c, line } of pointers) {
+    const src = c.userData.source;
+    line.visible = false;
+    if (!inXr || !src || src.hand || src.targetRayMode !== 'tracked-pointer') continue;
+    const ray = rayOf(c);
+    let reach = Infinity;
+    // On the play button (the trigger then plays, see 'select').
+    if (playBall.visible && !video.playing && ray.distanceSqToPoint(ballWorld) < 0.2 * 0.2) {
+      playBall.userData.rayOn = true;
+      reach = ray.origin.distanceTo(ballWorld);
     }
+    if (videoControls.visible) {
+      const hit = videoControls.hitRay(ray);
+      rayHits.push(hit);
+      if (hit.near && videoControls.shown) reach = hit.distance;
+    }
+    if (quitButton.visible) {
+      quitPointers.push(c.userData.tip.copy(ray.origin));
+      const hit = quitButton.hitRay(ray);
+      if (hit.near) {
+        reach = Math.min(reach, hit.distance);
+        if (c.userData.selecting) quitPressed = true;
+      }
+    }
+    if (reach < Infinity) { line.visible = true; line.scale.z = reach; }
+  }
+  if (videoControls.visible) {
     videoControls.update(t, dt, {
       fingertips, rayHits,
       paused: video.paused, time: video.currentTime, duration: video.duration, label: video.label,
     });
-  } else {
-    for (const p of pointers) p.line.visible = false;
   }
+  if (quitButton.update(quitPointers, quitPressed, dt, t)) quitExperience();
   if (DEBUG) {
     clock.frames++;
     if (t - clock.fpsT > 0.5) {
@@ -1449,7 +1467,19 @@ $('enterXr').addEventListener('click', async () => {
       playBall.getWorldPosition(ballWorld);
       if (ray.distanceSqToPoint(ballWorld) < 0.2 * 0.2) startVideo();
     });
-    session.addEventListener('end', () => { leaveRace(null, true); $('ui').hidden = false; state.running = false; stopMusic(true); });
+    // Quit, or the headset's own way out: everything stops and the start
+    // card is back. 'scene:session-end' tells Jane.
+    session.addEventListener('end', () => {
+      state.running = false;
+      leaveRace(null, true);
+      video.stop();
+      videoControls.hide();
+      quitButton.show(false);
+      gullVoice.setLevel(0, 0.1);
+      $('ui').hidden = false;
+      stopMusic(true);
+      window.dispatchEvent(new Event('scene:session-end'));
+    });
     // Give tracking a moment to settle before reading the head pose.
     setTimeout(startSequence, 600);
   } catch (err) {
@@ -1478,10 +1508,10 @@ renderer.domElement.addEventListener('click', (e) => {
   const rc = new THREE.Raycaster();
   rc.setFromCamera(ndc, camera);
   if (videoControls.visible) { videoControls.pressRay(rc.ray); return; }
-  if (playBall.visible && rc.intersectObject(playBall.userData.ball).length) startVideo();
+  if (playBall.visible && rc.intersectObjects(playButton.hits, false).length) startVideo();
 });
 window.__startVideo = startVideo;
-window.__debug = { state, playBall, video, worldRoot, gull, bill, splatJane, music, spark, videoControls, gullVoice, raceBox, enterRace, leaveRace };
+window.__debug = { state, playBall, playButton, video, worldRoot, gull, bill, splatJane, music, spark, videoControls, gullVoice, raceBox, enterRace, leaveRace, hands, quitButton, times: { T_PORTAL, T_GLIDE, T_ARRIVE } };
 
 // Test hook: freeze the sequence at a given time (seconds).
 window.__setSequenceTime = (T) => { state.fixedT = T; };

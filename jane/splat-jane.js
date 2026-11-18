@@ -117,10 +117,13 @@ function particleModifier(scan, unit, form, gone, sparks) {
 // spot / faceTo: where she stands and the point she turns to face, in that group.
 // scans: her poses; the chain runs through scans[0..chainEnd] in order, the
 // rest are shown on their own (appear). hold: seconds each pose shows before
-// the next; morph: seconds a change takes.
+// the next; morph: seconds a change takes. onLastPose: called once each time
+// the chain gets to its last pose (as the change into it starts, or at once
+// when no pose is left to go to).
 export function createSplatJane({
   parent, spot, faceTo, spark, height = 1.75, sparks = SPARKS, hold = HOLD_SEC, morph = MORPH_SEC,
   scans = [JANE_SCANS.surf, JANE_SCANS.new, JANE_SCANS.sing], chainEnd = scans.length - 1,
+  onLastPose = null,
 }) {
   const lag = morph * 0.2; // the incoming scan's wave trails the outgoing one's
   const root = new THREE.Group();
@@ -158,7 +161,13 @@ export function createSplatJane({
   })();
 
   // mode: hidden | forming | hold | morph | still
-  const st = { mode: 'hidden', t0: 0, now: 0, current: 0, next: -1, chain: false, want: null };
+  const st = { mode: 'hidden', t0: 0, now: 0, current: 0, next: -1, chain: false, want: null, ended: false };
+  // The chain is at its last pose: say so, once.
+  const atEnd = () => {
+    if (!st.chain || st.ended) return;
+    st.ended = true;
+    if (onLastPose) onLastPose();
+  };
   // The next pose of the chain after i that isn't missing, or -1.
   const nextOf = (i) => {
     if (!st.chain) return -1;
@@ -200,10 +209,12 @@ export function createSplatJane({
       poses.forEach((p, j) => set(p, { visible: j === k, form: w.form ? WAVE_START : WAVE_END, gone: WAVE_START }));
       st.current = k;
       st.chain = w.then;
+      st.ended = false;
       st.next = nextOf(k);
       st.mode = w.form ? 'forming' : (st.next >= 0 ? 'hold' : 'still');
       st.t0 = st.now;
       setFilter();
+      if (st.next < 0) atEnd();
     };
     show();
   }
@@ -213,10 +224,12 @@ export function createSplatJane({
     if (st.want) { st.want.then = true; return; }
     if (st.mode === 'hidden') { appear(0, true); return; }
     st.chain = true;
+    st.ended = false;
     if (st.mode === 'still' || st.mode === 'hold') {
       st.next = nextOf(st.current);
       st.mode = st.next >= 0 ? 'hold' : 'still';
       st.t0 = st.now;
+      if (st.next < 0) atEnd();
     }
   }
 
@@ -238,16 +251,18 @@ export function createSplatJane({
         st.next = nextOf(st.current);
         st.mode = st.next >= 0 ? 'hold' : 'still';
         st.t0 = t;
+        if (st.next < 0) atEnd();
       }
     } else if (st.mode === 'hold' && e >= hold) {
       // The next pose's file turned out to be missing: on to the one after.
       if (st.next >= 0 && poses[st.next].state === 'failed') st.next = nextOf(st.current);
-      if (st.next < 0) st.mode = 'still';
+      if (st.next < 0) { st.mode = 'still'; atEnd(); }
       else if (poses[st.next].state === 'ready') {
         set(poses[st.next], { visible: true, form: WAVE_START, gone: WAVE_START });
         st.mode = 'morph';
         st.t0 = t;
         setFilter();
+        if (nextOf(st.next) < 0) atEnd(); // the change into the last one
       } // still loading: hold on until it is there
     } else if (st.mode === 'morph') {
       const b = poses[st.next];
@@ -263,6 +278,7 @@ export function createSplatJane({
         st.mode = st.next >= 0 ? 'hold' : 'still';
         st.t0 = t;
         setFilter();
+        if (st.next < 0) atEnd();
       }
     }
   }
