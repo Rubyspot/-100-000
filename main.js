@@ -355,6 +355,20 @@ const room = new SplatMesh({
 room.rotation.x = Math.PI;
 room.position.y = FLOOR;
 scanGroup.add(room);
+// Ilia, Nov 18 19:53: "just cover floor underneath". A plain dark floor just
+// under the scan's floor (and under Jane's feet at y = 0), the size of the
+// scan's floor (x -3.41..1.89, z -6.23..6.75 in the scan), so the 360 picture
+// no longer shows through where the scanned floor is thin. ?underfloor=0
+// takes it away; not on the stage.
+if (!STAGE && !params.get('scan') && params.get('underfloor') !== '0') {
+  const underFloor = new THREE.Mesh(
+    new THREE.PlaneGeometry(5.3, 12.98),
+    maskToPortal(new THREE.MeshBasicMaterial({ color: 0x22170c })),
+  );
+  underFloor.rotation.x = -Math.PI / 2; // facing up
+  underFloor.position.set(-0.76, -0.005, -0.26); // scan (x, z) is (x, -z) here
+  scanGroup.add(underFloor);
+}
 // Ilia, Nov 18: "splat transparent on the floor and some walls". The 400k cut
 // of the scan leaves thin, half-clear splats there, and the 360 render behind
 // the room showed through them. ?solid=2 makes every room splat more solid:
