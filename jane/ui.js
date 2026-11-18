@@ -1,7 +1,7 @@
 // Small in-headset UI for Jane: a caption panel over her head and the
 // floating jetski she offers after the video (touch it to ride).
 import * as THREE from 'three';
-import { loadJetski, makeJetski } from '../jetski/models.js';
+import { loadJetski, makeJetski, JET_BLACK } from '../jetski/models.js';
 
 function wrap(g, text, maxWidth, maxLines) {
   const words = text.split(/\s+/), lines = [];
@@ -78,9 +78,8 @@ export function makeJetskiButton(label) {
   group.add(toy);
   let model = null;
   loadJetski().then(() => {
-    const ski = makeJetski(0xffd23f, null, { accent: 0xff4fa3 });
+    const ski = makeJetski(0xffd23f, null, { accent: JET_BLACK });
     ski.mats.paint.emissive.set(0xffd23f); ski.mats.paint.emissiveIntensity = 0.14;
-    ski.mats.trim.emissive.set(0xff4fa3); ski.mats.trim.emissiveIntensity = 0.2;
     const box = new THREE.Box3().setFromObject(ski.root);
     const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
     const k = 0.36 / Math.max(size.x, size.z);
@@ -145,6 +144,7 @@ export function makeJetskiButton(label) {
   // a touch counts once that spot has been free of hands for a moment.
   let shownAt = -1, pressedAt = -1, fired = false, armed = false, session = null, now = 0, spin = 0, last = 0;
   const world = new THREE.Vector3();
+  let faceAt = null; // the point its tag faces; null: the player's head, each frame
   function press() {
     if (pressedAt >= 0 || !group.visible || shownAt < 0 || now - shownAt < 0.7) return;
     pressedAt = now;
@@ -172,6 +172,9 @@ export function makeJetskiButton(label) {
     hit,
     show() { group.visible = true; shownAt = -1; pressedAt = -1; fired = false; armed = false; drawTag(); },
     hide() { group.visible = false; },
+    // Where its tag looks (world space), e.g. the eyes of a player standing at
+    // the spot it was put on; null: at the player's head, wherever that is.
+    face(at) { faceAt = at ? at.clone() : null; },
     click: press, // flat preview
     onPress: null,
     update(t, head, renderer, frame, rig) {
@@ -181,18 +184,19 @@ export function makeJetskiButton(label) {
       const dt = Math.min(0.1, Math.max(0, t - last)); last = t;
       if (shownAt < 0) shownAt = t;
       const pressing = pressedAt >= 0 ? Math.min(1, (t - pressedAt) / PRESS_SEC) : 0;
-      // Pops in, turns slowly and rocks as if on a swell; spins up when touched.
+      // Pops in and turns slowly in place (Ilia, Nov 18: the buttons must stay
+      // put, so it no longer bobs, rocks or swells); spins up when touched.
       const a = Math.min(1, (t - shownAt) / 0.6);
       const pop = a < 1 ? 1 + 2.7 * Math.pow(a - 1, 3) + 1.7 * Math.pow(a - 1, 2) : 1;
       spin += dt * (0.7 + 14 * pressing * pressing);
-      toy.rotation.set(0.07 * Math.sin(t * 1.7 + 1), spin, 0.09 * Math.sin(t * 1.3));
-      toy.position.y = 0.016 * Math.sin(t * 1.8) + 0.05 * pressing;
-      toy.scale.setScalar(Math.max(0.0001, pop * (1 + 0.04 * Math.sin(t * 3) + 0.3 * pressing)));
+      toy.rotation.set(0, spin, 0);
+      toy.position.y = 0.05 * pressing;
+      toy.scale.setScalar(Math.max(0.0001, pop * (1 + 0.3 * pressing)));
       puddle.scale.setScalar(Math.max(0.0001, pop * (1 + 0.5 * pressing)));
       puddle.material.uniforms.time.value = t;
       puddle.material.uniforms.glow.value = pressing;
       tag.visible = pressedAt < 0;
-      tag.lookAt(head);
+      tag.lookAt(faceAt || head);
       if (pressedAt >= 0) {
         if (!fired && pressing >= 1) { fired = true; group.userData.onPress && group.userData.onPress(); }
         return;

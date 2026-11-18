@@ -1,7 +1,6 @@
 // The jetskis: the Kawasaki STX-15F model (converted from the FBX, 13k
 // triangles) with our own paint and a raised handlebar, gloves that show
-// your grip, and Jane (her first 3D scan, the wide stance with both fists
-// out) standing on hers.
+// your grip, and Jane (her jetski scan, Nov 18) riding hers.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
@@ -10,10 +9,19 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // riser and the eyes sit this far above and behind the grips.
 export const SEAT = { below: 0.36, ahead: 0.42, riser: 0.12 };
 
-// Jane's first scan (jane-*.sog): height in scan units, where her feet and
-// centre are. The same numbers the opening uses.
-export const JANE_SCAN = { height: 3.675, feetY: 0.099, cx: -0.075, cz: -0.69 };
-export const JANE_HEIGHT = 1.75;
+// Jane's jetski scan (Ilia, Nov 18: "jetski pose only for game"): she stands
+// in the footwells, knees bent and feet wide, leaning on the bar with both
+// hands. assets/jane/jetski-75k.sog is his Jetski.sog cut to 75k splats with
+// no spherical harmonics (as tools/jane-pose.sh does), SOG v2 for our Spark.
+// Measured on the file, in scan units (y down, she faces -z): the middle of
+// her two hands and her soles. Her size: the units of the heart and singing
+// captures, where the room shows her 1.75 m tall (jane/splat-jane.js).
+export const JANE_RIDER = {
+  url: '../assets/jane/jetski-75k.sog',
+  unit: 1.75 / 1.80,             // metres per scan unit
+  hands: [-0.068, -1.1505, -0.478],
+  soles: -0.468,
+};
 
 const asset = (path) => new URL(path, import.meta.url).href;
 let template = null, loading = null;
@@ -30,6 +38,9 @@ export function loadJetski() {
 }
 
 const PAINT = { paint: 'paint', trim: 'trim', seat: 'seat', bar: 'bar', dark: 'dark' };
+
+// Gloss black for the parts that used to be pink (Ilia, Nov 17).
+export const JET_BLACK = 0x121316;
 
 // Builds one jetski (forward -Z, hull bottom at y = 0):
 // { root, body (pitch and roll), bar (steering pivot), grips: [left, right],
@@ -136,22 +147,24 @@ export function makeGloves(ski) {
   });
 }
 
-// Jane's scan standing on her jetski: feet in the footwells either side of
-// the seat, leaning into the wind, fists on a tall stand-up bar.
-// SplatMesh comes from Spark; the race page hands it over.
-export function makeJaneRider(ski, SplatMesh, { url = asset('../assets/jane/jane-75k.sog'), footY = 0.3, standZ = 0.1, lean = 0.2 } = {}) {
+// Jane's scan on her jetski: her hands on the middle of the grips, which puts
+// her soles on the footwell floor when the bar is at its stock height (riser
+// 0: the grips 1.05 m up, the footwells 0.38 m). SplatMesh comes from Spark;
+// the race page hands it over.
+export function makeJaneRider(ski, SplatMesh, { url = asset(JANE_RIDER.url) } = {}) {
   const stand = new THREE.Group();
   const mesh = new SplatMesh({ url });
-  const k = JANE_HEIGHT / JANE_SCAN.height;
-  mesh.rotation.x = Math.PI;
+  const k = JANE_RIDER.unit, [hx, hy, hz] = JANE_RIDER.hands;
+  // y down to y up, still facing -z (the bow): (x, y, z) -> (-x, -y, z).
+  mesh.rotation.z = Math.PI;
   mesh.scale.setScalar(k);
-  mesh.position.set(-JANE_SCAN.cx * k, JANE_SCAN.feetY * k, JANE_SCAN.cz * k);
   stand.add(mesh);
-  // The scan faces +Z; turn her to face the bow, then lean her forward.
-  stand.rotation.set(-lean, Math.PI, 0);
-  stand.position.set(0, footY, standZ);
+  ski.root.updateMatrixWorld(true);
+  const mid = ski.grips[0].getWorldPosition(new THREE.Vector3()).add(ski.grips[1].getWorldPosition(new THREE.Vector3())).multiplyScalar(0.5);
+  ski.body.worldToLocal(mid);
+  mesh.position.set(mid.x + k * hx, mid.y + k * hy, mid.z - k * hz);
   ski.body.add(stand);
-  return { stand, mesh, ready: mesh.initialized };
+  return { stand, mesh, ready: mesh.initialized, soles: mesh.position.y - k * JANE_RIDER.soles };
 }
 
 // A stand-in rider for when the scan can't load: simple shapes in her colours.

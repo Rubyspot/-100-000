@@ -678,9 +678,14 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = nul
       ext = ext.map((_, c) => { let m = 1e9; for (let o = -5; o <= 5; o++) m = Math.min(m, ext[clamp(c + o, 0, ext.length - 1)]); return m; });
       ext = ext.map((_, c) => { let a = 0, n = 0; for (let o = -4; o <= 4; o++) { a += ext[clamp(c + o, 0, ext.length - 1)]; n++; } return a / n; });
       const FACE = 14, ROWS = 5 + FACE + 6; // waterline, the face, the top
+      // At the canal's mouths the wall dips under the sea over its last
+      // columns (about 7 m), so its end is never an open cut you can see
+      // into (Ilia, Nov 17: no holes in the landscape).
+      const DIP = 5;
       const base = land.count;
       cols.forEach((k, c) => {
         const p = pts[k], r = rights[k], e = wallF[k];
+        const dip = smooth(1 - Math.min(c, cols.length - 1 - c) / DIP);
         const w0 = half[k] + 0.35;
         const room = Math.max(5, ext[c] - w0);
         // Height: towers and saddles along the canal, low at the mouths.
@@ -703,6 +708,12 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = nul
         rows.push([lerp(topOff, room, 0.95), T * 0.3 + 0.3]);
         rows.push([room + 0.8, 0.6]);
         rows.push([room + 2.4, -3.5]);
+        // Where the wall is low (towards the mouths) its rows lie close
+        // together: the bulges are smaller there, the face only climbs, and
+        // the top and the back stay outside the face, so the rock never folds
+        // through itself (a fold shows as a slit of sky).
+        const calm = clamp((T - 1.3) / 6, 0.15, 1);
+        let faceOut = -Infinity, lastOut = -Infinity, lastY = -Infinity;
         for (let j = 0; j < ROWS; j++) {
           const [off, y0] = rows[j];
           let x = p.x + r.x * side * (w0 + off), z = p.z + r.z * side * (w0 + off), y = y0;
@@ -712,13 +723,22 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = nul
           if (j >= 5 && j < 5 + FACE) d += (noise2(c * 0.33 + side * 11, y * 0.05) - 0.5) * 1.5 + (fbm3(x * 0.34, y * 0.34, z * 0.34, 2) - 0.5) * 0.9;
           if (j <= 4) d = Math.max(0, d) * 0.5;
           if (j >= ROWS - 2) d = 0;
-          x += r.x * side * d; z += r.z * side * d;
+          let o = w0 + off + d * calm;
+          if (j >= 5 && j < 5 + FACE) faceOut = Math.max(faceOut, o);
+          else if (j >= 5 + FACE) o = Math.max(o, faceOut + 0.2, lastOut + 0.1);
+          lastOut = o;
+          x = p.x + r.x * side * o; z = p.z + r.z * side * o;
           if (j >= 5 && j < ROWS - 2) y += (noise3(x * 0.23, y * 0.23, z * 0.23) - 0.5) * Math.min(1.4, T * 0.12);
+          if (j >= 5 && j < 5 + FACE) y = Math.max(y, lastY + 0.02);
+          lastY = y;
+          y = lerp(y, -2.4, dip);
           const col = rockColor(x, y, z);
           if (j >= 5 + FACE && j <= 7 + FACE) col.lerp(rockTop, 0.5);
           land.vert(x, y, z, col, 0);
-          if (j >= 4 + FACE && j <= 6 + FACE && T > 4 && rnd() < 0.3) leafSpots.push([x, y, z, 1.8 + rnd() * 2.4]);
-          if (j === 7 + FACE && T > 6 && rnd() < 0.15) leafSpots.push([x, y, z, 1.5 + rnd() * 1.5]);
+          // (Bushes on a dipped end are drawn by nobody, but still drawn
+          // lots for, so the rest of the island grows the same.)
+          if (j >= 4 + FACE && j <= 6 + FACE && T > 4 && rnd() < 0.3) leafSpots.push([x, y, z, 1.8 + rnd() * 2.4, dip > 0]);
+          if (j === 7 + FACE && T > 6 && rnd() < 0.15) leafSpots.push([x, y, z, 1.5 + rnd() * 1.5, dip > 0]);
         }
       });
       // Seen from the channel, the right wall's columns run to the left and
@@ -1087,7 +1107,16 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = nul
       if (walled[i]) raw[i] = clamp(curv[i] * 70, -1, 1) * Math.max(0, half[i] - 2.8) * 0.8;
       else {
         let env = 1;
-        for (const r of rampIdx) env = Math.min(env, smooth((cyc(i, r) * step - 16) / 30));
+        // Straight for 30 m before a ramp's foot, so riders (and the bills)
+        // line up with its middle, clear of its side tubes.
+        for (const r of rampIdx) {
+          let d = (r - i) % SAMPLES;
+          if (d < 0) d += SAMPLES;
+          if (d > SAMPLES / 2) d -= SAMPLES; // positive: the ramp is ahead
+          env = Math.min(env, smooth((Math.abs(d) * step - (d > 0 ? 34 : 16)) / 30));
+        }
+        // And through the middle of each arch.
+        for (const g of gateIdx) env = Math.min(env, smooth((cyc(i, g) * step - 8) / 30));
         for (const s of CANALS) env = Math.min(env, smooth((Math.min(cyc(i, s.i0), cyc(i, s.i1)) * step - 30) / 40));
         env = Math.min(env, smooth((cyc(i, 0) * step - 20) / 40));
         const inSlalom = i > slalom[0] && i < slalom[1];
@@ -1135,11 +1164,12 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = nul
       const x = hill.x + Math.cos(th) * rr, z = hill.z + Math.sin(th) * rr;
       leafSpots.push([x, Math.max(1.6, heightAt(x, z)) + 0.6, z, 2.2 + rnd() * 2.6]);
     }
-    for (const [x, y, z, s] of leafSpots) {
+    for (const [x, y, z, s, sunk] of leafSpots) {
       const g = greens[Math.floor(rnd() * greens.length)];
       const m = M4(x, y + s * 0.25, z, rnd() * 6, s * (0.9 + rnd() * 0.5), s * (0.6 + rnd() * 0.3), s * (0.9 + rnd() * 0.5), rnd() * 0.5, rnd() * 0.5);
       const sh = shapes[s >= 2.2 && courseNear(x, z, 2).dist < 40 ? 1 : 0];
       for (let i = 0; i < sh.jitter.length; i++) sh.jitter[i] = 0.72 + 0.56 * rnd();
+      if (sunk) continue;
       deco.add(sh.geo, m, g, 2, (v, c, i) => { v.multiplyScalar(sh.jitter[i]); c.multiplyScalar(0.75 + 0.5 * (v.y * 0.5 + 0.5)); });
     }
   }
@@ -1388,10 +1418,137 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = nul
       if (landDist(x, z) < 4 || courseNear(x, z, 3).clear < 3) continue;
       const m = new THREE.Mesh(kind ? duck : flamingo, terrainMat);
       m.position.set(x, 0, z); m.rotation.y = rnd() * 6.28;
-      m.userData = { ph: rnd() * 9, spin: (rnd() - 0.5) * 0.08 };
+      const ph = rnd() * 9, spin = (rnd() - 0.5) * 0.08;
+      m.userData = { ph, spin, base: spin };
       m.frustumCulled = false;
       group.add(m);
       floats.push(m);
+    }
+  }
+
+  // ---------- things in the water you can hit ----------
+
+  // Seen from above each is a disc, with a top that a jump can clear (a
+  // ramp's side tube is a long one: a capsule, so a hull slides along it).
+  // Buoys and pool floats are moored: a hull knocks them aside and they swing
+  // back on their lines. The gates' floats and the ramps' side tubes are fixed.
+  const things = [];
+  const TH = 12, thingCells = new Map();
+  function addThing(o) {
+    Object.assign(o, { ox: 0, oz: 0, vx: 0, vz: 0, dip: 0, under: 0 });
+    things.push(o);
+    const key = Math.floor(o.x / TH) + ',' + Math.floor(o.z / TH);
+    if (!thingCells.has(key)) thingCells.set(key, []);
+    thingCells.get(key).push(o);
+  }
+  buoyPos.forEach(([x, z], i) => addThing({ kind: 'buoy', x, z, r: 0.55, top: 0.75, mass: 80, moor: 2.4, i }));
+  gates.forEach((g, n) => {
+    const r = (n === 0 ? 0.62 : 0.42) * 2.4;
+    for (const s of [-1, 1]) addThing({ kind: 'gate', x: g.pos.x + g.right.x * s * g.half, z: g.pos.z + g.right.z * s * g.half, r, top: 1.0, mass: Infinity });
+  });
+  for (const f of floats) addThing({ kind: 'float', x: f.position.x, z: f.position.z, r: 1.95, top: 1.2, mass: 60, moor: 5, mesh: f });
+  for (const rp of ramps) {
+    for (const s of [-1, 1]) {
+      // From just before the ramp's foot to just past its lip; its top rises with the deck.
+      const a0 = -0.2, a1 = RAMP_LEN + 0.2, side = s * (RAMP_W / 2 + 0.2);
+      const ax = rp.start.x + rp.r.x * side + rp.t.x * a0, az = rp.start.z + rp.r.z * side + rp.t.z * a0;
+      const bx = rp.start.x + rp.r.x * side + rp.t.x * a1, bz = rp.start.z + rp.r.z * side + rp.t.z * a1;
+      addThing({
+        kind: 'ramp', x: (ax + bx) / 2, z: (az + bz) / 2, r: 0.45, top: 0.55, rise: RAMP_LIP, mass: Infinity, ramp: rp,
+        seg: { ax, az, dx: bx - ax, dz: bz - az, len2: (bx - ax) ** 2 + (bz - az) ** 2, a0, a1 }, half: (a1 - a0) / 2,
+      });
+    }
+  }
+
+  const floatThings = things.filter((o) => o.kind === 'float');
+
+  // The hull seen from above: discs along its length (bow at -z).
+  const HULL_DISCS = [[-1.25, 0.4], [-0.6, 0.58], [0.1, 0.62], [0.85, 0.6]];
+  const I_YAW = 300, CRAFT_MASS = 350;
+  const bumpResult = { hit: 0, kind: '', x: 0, z: 0 };
+  // Keeps a craft out of the things in the water (water: the sea's height
+  // there; buoys and floats ride it). Returns the hardest contact this step:
+  // { hit: closing speed, kind, x, z (where) }.
+  function bump(c, water = 0) {
+    bumpResult.hit = 0; bumpResult.kind = '';
+    const s = Math.sin(c.yaw), co = Math.cos(c.yaw);
+    const cx = Math.floor(c.x / TH), cz = Math.floor(c.z / TH);
+    for (let a = cx - 1; a <= cx + 1; a++) for (let b = cz - 1; b <= cz + 1; b++) {
+      const list = thingCells.get(a + ',' + b);
+      if (!list) continue;
+      for (const o of list) {
+        if (o.under > 0) continue; // pushed under the hull
+        const top = o.top + (o.ramp ? o.ramp.base : o.kind === 'gate' ? 0 : water);
+        if (c.y > top + (o.rise || 0)) continue; // in the air over it
+        let ox = o.x + o.ox, oz = o.z + o.oz;
+        const reach = o.r + (o.half || 0) + 2.2;
+        if (Math.abs(c.x - ox) > reach || Math.abs(c.z - oz) > reach) continue;
+        let deep = 0, nx = 0, nz = 0, lever = 0;
+        for (const [zc, rc] of HULL_DISCS) {
+          const px = c.x + s * zc, pz = c.z + co * zc;
+          let qx = ox, qz = oz;
+          if (o.seg) {
+            // The nearest point of the tube's axis, and the tube's top there.
+            const g = o.seg, f = clamp(((px - g.ax) * g.dx + (pz - g.az) * g.dz) / g.len2, 0, 1);
+            qx = g.ax + g.dx * f; qz = g.az + g.dz * f;
+            if (c.y > top + o.rise * clamp((g.a0 + (g.a1 - g.a0) * f) / RAMP_LEN, 0, 1)) continue;
+          }
+          const dx = px - qx, dz = pz - qz, d = Math.hypot(dx, dz);
+          const pen = rc + o.r - d;
+          if (pen > deep && d > 1e-4) { deep = pen; nx = dx / d; nz = dz / d; lever = zc; ox = qx; oz = qz; }
+        }
+        if (deep <= 0) continue;
+        // A moored thing whose line is taut doesn't give any further. A buoy
+        // then goes under the hull instead, and pops up again behind it.
+        let iO = o.mass === Infinity ? 0 : 1 / o.mass;
+        if (iO && Math.hypot(o.ox - nx * deep, o.oz - nz * deep) > o.moor) {
+          if (o.kind === 'buoy') {
+            const v = Math.max(0, -((c.vx - o.vx) * nx + (c.vz - o.vz) * nz));
+            o.under = 0.9; o.vx = o.vz = 0;
+            c.vx *= 0.72; c.vz *= 0.72; c.vy = Math.max(c.vy, 0.9);
+            if (v > bumpResult.hit) { bumpResult.hit = v; bumpResult.kind = o.kind; bumpResult.x = ox + nx * o.r; bumpResult.z = oz + nz * o.r; }
+            continue;
+          }
+          iO = 0;
+        }
+        const iM = 1 / CRAFT_MASS, share = iM / (iM + iO);
+        c.x += nx * deep * share; c.z += nz * deep * share;
+        o.ox -= nx * deep * (1 - share); o.oz -= nz * deep * (1 - share);
+        const rv = (c.vx - o.vx) * nx + (c.vz - o.vz) * nz;
+        if (rv >= 0) continue;
+        const j = (-(1 + (iO ? 0.35 : 0.25)) * rv) / (iM + iO);
+        c.vx += j * iM * nx; c.vz += j * iM * nz;
+        o.vx -= j * iO * nx; o.vz -= j * iO * nz;
+        o.dip = Math.min(0.5, o.dip + -rv * 0.04);
+        // Scraping along it costs a little speed; off-centre it turns the hull.
+        const keep = 1 - Math.min(0.12, -rv * 0.012);
+        c.vx *= keep; c.vz *= keep;
+        c.yawRate += clamp((j * lever * (co * nx - s * nz)) / I_YAW * 0.25, -1.2, 1.2);
+        if (o.mesh) o.mesh.userData.spin += clamp(((c.vx * nz - c.vz * nx) * 0.004), -0.05, 0.05);
+        if (-rv > bumpResult.hit) {
+          bumpResult.hit = -rv; bumpResult.kind = o.kind;
+          bumpResult.x = ox + nx * o.r; bumpResult.z = oz + nz * o.r;
+        }
+      }
+    }
+    return bumpResult;
+  }
+  // The moored ones swing back on their lines, slowed by the water.
+  function stepThings(dt) {
+    for (const o of things) {
+      if (o.mass === Infinity || (o.ox === 0 && o.oz === 0 && o.vx === 0 && o.vz === 0 && o.under <= 0 && o.dip < 1e-3)) continue;
+      const k = o.kind === 'buoy' ? 9 : 2.5, dmp = o.kind === 'buoy' ? 2.2 : 1.4;
+      o.vx += (-o.ox * k - o.vx * dmp) * dt; o.vz += (-o.oz * k - o.vz * dmp) * dt;
+      o.ox += o.vx * dt; o.oz += o.vz * dt;
+      const d = Math.hypot(o.ox, o.oz);
+      if (d > o.moor) {
+        o.ox *= o.moor / d; o.oz *= o.moor / d;
+        const out = (o.vx * o.ox + o.vz * o.oz) / o.moor;
+        if (out > 0) { o.vx -= out * o.ox / o.moor; o.vz -= out * o.oz / o.moor; }
+      }
+      if (o.under > 0) { o.under -= dt; o.dip += (1.1 - o.dip) * Math.min(1, dt * 12); }
+      else o.dip *= Math.exp(-dt * 3);
+      if (Math.abs(o.ox) + Math.abs(o.oz) < 1e-3 && Math.abs(o.vx) + Math.abs(o.vz) < 1e-3) { o.ox = o.oz = o.vx = o.vz = 0; }
     }
   }
 
@@ -1455,22 +1612,33 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = nul
     return e;
   }
 
-  const _m = new THREE.Matrix4();
+  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _ax = new THREE.Vector3(), _p = new THREE.Vector3(), _s1 = new THREE.Vector3(1, 1, 1);
+  let lastT = null;
   function update(t, camPos, ocean) {
+    const dt = lastT === null ? 0 : clamp(t - lastT, 0, 0.1);
+    lastT = t;
+    stepThings(dt);
     terrainMat.uniforms.camPos.value.copy(camPos);
     for (const r of ramps) {
       r.base = ocean.heightAt(r.start.x + r.t.x * RAMP_LEN * 0.5, r.start.z + r.t.z * RAMP_LEN * 0.5, t) - 0.12;
       r.mesh.position.y = r.base;
     }
     for (let i = 0; i < buoyPos.length; i++) {
-      const [x, z] = buoyPos[i];
+      const o = things[i], x = o.x + o.ox, z = o.z + o.oz;
       if (Math.abs(x - camPos.x) + Math.abs(z - camPos.z) > 280) continue;
-      buoyMesh.setMatrixAt(i, _m.makeTranslation(x, ocean.heightAt(x, z, t) + 0.12, z));
+      // Knocked: it leans the way it is going and is pushed under a little.
+      const sp = Math.hypot(o.vx, o.vz);
+      if (sp > 0.02) _q.setFromAxisAngle(_ax.set(o.vz / sp, 0, -o.vx / sp), Math.min(0.75, sp * 0.14));
+      else _q.identity();
+      buoyMesh.setMatrixAt(i, _m.compose(_p.set(x, ocean.heightAt(x, z, t) + 0.12 - o.dip, z), _q, _s1));
     }
     buoyMesh.instanceMatrix.needsUpdate = true;
-    for (const f of floats) {
+    for (const o of floatThings) {
+      const f = o.mesh;
+      f.position.x = o.x + o.ox; f.position.z = o.z + o.oz;
       if (Math.abs(f.position.x - camPos.x) + Math.abs(f.position.z - camPos.z) > 320) continue;
-      f.position.y = ocean.heightAt(f.position.x, f.position.z, t) - 0.05;
+      f.position.y = ocean.heightAt(f.position.x, f.position.z, t) - 0.05 - o.dip * 0.5;
+      f.userData.spin += (f.userData.base - f.userData.spin) * Math.min(1, dt * 0.4);
       f.rotation.y += f.userData.spin * 0.016;
       f.rotation.z = Math.sin(t * 0.9 + f.userData.ph) * 0.05;
     }
@@ -1478,7 +1646,7 @@ export function buildWorld({ sky, font = 'system-ui, sans-serif', textures = nul
 
   const course = { SAMPLES, length, step, pts, tans, rights, half, walled, wallF, curv, lineLat, at, nearest, idxOfCp, cpIdx };
   return {
-    group, course, gates, ramps, arches, solids, rampHeight, collide, enclosure, landDist, heightAt, depthAt,
+    group, course, gates, ramps, arches, solids, rampHeight, collide, bump, things, enclosure, landDist, heightAt, depthAt,
     landTexture, landBounds, update,
     stats: { landTris: land.idx.length / 3, decoTris: deco.idx.length / 3, frondTris: fronds.idx.length / 3, palms: palmSpots.length, bushes: leafSpots.length },
   };

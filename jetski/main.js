@@ -51,6 +51,8 @@ const race = createRace({
     ...(params.has('steer') ? { steer: num('steer', 1.3) } : {}),
     ...(params.has('bill') ? { bill: num('bill', 0.9) } : {}),
     ...(params.get('throttle') === 'any' ? { throttle: 'any' } : {}),
+    ...(params.has('quit') ? { quit: params.get('quit') === 'off' ? null : num('quit', 95) } : {}),
+    ...(params.has('back') ? { back: params.get('back') === 'bar' ? null : num('back', 65) } : {}),
   },
 });
 

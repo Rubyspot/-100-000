@@ -1,13 +1,14 @@
-// The way out of the ride: the 180 video's Back button, in the same place
-// and the same look. A gold button, 8.4 cm across, with a white arrow on a
-// deep teal face, stands on a small dark glass plate low in front of the
-// rider, where the video's controls are: here that is on the handlebar,
-// between the hands.
+// The way out of the ride: the 180 video's Back button, the same look. A
+// gold button, 8.4 cm across, with a white arrow on a deep teal face, stands
+// on a small dark glass plate. In the headset it stands on the right, beside
+// the opening's Quit, well away from the hands on the grips (Ilia, Nov 18:
+// "move on the right to avoid pressing on it while playing"); on a screen it
+// sits on the handlebar, where a click reaches it (place() and the race).
 //
-// A hand on a grip never comes near it, and to be sure a passing hand can't
-// end a race, it takes a hold: a fingertip (or a controller) on the button,
-// or the B button, for half a second. A gold ring fills around it meanwhile.
-// On a screen a click is enough.
+// To be sure a passing hand can't end a race, it takes a hold: a fingertip
+// (or a controller) on the button, or the B button, for a second and a half.
+// A yellow ring fills around it over a white one (as on Quit) and the word
+// turns gold. On a screen a click is enough.
 import * as THREE from 'three';
 
 const R = 0.042;            // button radius, as on the video's controls
@@ -15,7 +16,7 @@ const DEPTH = 0.016;        // button thickness
 const HIT_R = 0.06;         // touch radius, a little bigger than the button
 const PLATE_W = 0.2, PLATE_H = 0.092;
 const BX = -0.05;           // button centre on the plate; the words are to its right
-const HOLD = 0.5;           // seconds of holding it
+const HOLD = 1.5;           // seconds of holding it (the opening's Quit takes as long)
 const GOLD = '#f2c45a';
 const SEG = 48;             // segments of the ring that fills
 
@@ -47,7 +48,8 @@ function drawFace(g, w) {
   g.beginPath(); g.moveTo(c - 72, top); g.lineTo(c - 30, top - 36); g.lineTo(c - 30, top + 36); g.closePath(); g.fill();
 }
 
-function drawPlate(g, w, h, label, hint) {
+// Just the word: white, gold while it is held.
+function drawPlate(g, w, h, label, active) {
   g.clearRect(0, 0, w, h);
   const px = w / PLATE_W;
   g.fillStyle = 'rgba(9, 15, 14, 0.8)';
@@ -56,12 +58,9 @@ function drawPlate(g, w, h, label, hint) {
   g.beginPath(); g.roundRect(3, 3, w - 6, h - 6, 56); g.fill(); g.stroke();
   const x = w / 2 + 0.046 * px;
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillStyle = 'rgba(255, 255, 255, 0.92)';
-  g.font = '600 70px system-ui, sans-serif';
-  g.fillText(label, x, h / 2 - 0.009 * px, 0.1 * px);
-  g.fillStyle = hint.active ? GOLD : 'rgba(255, 255, 255, 0.55)';
-  g.font = '500 31px system-ui, sans-serif';
-  g.fillText(hint.text, x, h / 2 + 0.024 * px, 0.104 * px);
+  g.fillStyle = active ? GOLD : 'rgba(255, 255, 255, 0.92)';
+  g.font = '600 76px system-ui, sans-serif';
+  g.fillText(label, x, h / 2 + 3, 0.1 * px);
 }
 
 // label: the word on the plate. Returns the plate (to hang on the jetski) and
@@ -71,15 +70,14 @@ export function createBackButton({ label = 'Back' } = {}) {
   root.visible = false;
 
   const plate = canvasTexture(512, Math.round(512 * PLATE_H / PLATE_W));
-  const hints = { idle: { text: 'Hold to leave', active: false }, held: { text: 'Leaving…', active: true } };
-  let hintNow = null;
-  const setHint = (hint) => {
-    if (hint === hintNow) return;
-    hintNow = hint;
-    drawPlate(plate.g, plate.w, plate.h, label, hint);
+  let activeNow = null;
+  const setActive = (active) => {
+    if (active === activeNow) return;
+    activeNow = active;
+    drawPlate(plate.g, plate.w, plate.h, label, active);
     plate.tex.needsUpdate = true;
   };
-  setHint(hints.idle);
+  setActive(false);
   const plateMat = new THREE.MeshBasicMaterial({ map: plate.tex, transparent: true, depthWrite: false, fog: false, toneMapped: false });
   const plateMesh = new THREE.Mesh(new THREE.PlaneGeometry(PLATE_W, PLATE_H), plateMat);
   plateMesh.renderOrder = 6;
@@ -101,18 +99,22 @@ export function createBackButton({ label = 'Back' } = {}) {
   faceMesh.position.z = DEPTH / 2 + 0.0006;
   faceMesh.renderOrder = 8;
   // Glow when a hand is at it, and the ring that fills while it is held
-  // (clockwise from the top).
+  // (clockwise from the top): yellow over a white track that is always there,
+  // for contrast (Ilia, Nov 18; the same as the opening's Quit).
   const glow = { transparent: true, depthWrite: false, fog: false, toneMapped: false, blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor };
   const halo = new THREE.Mesh(new THREE.RingGeometry(R + 0.003, R + 0.016, 64), new THREE.MeshBasicMaterial({ color: 0xffc860, ...glow }));
   halo.position.z = -DEPTH / 2 + 0.001;
   halo.renderOrder = 9; halo.visible = false;
+  const track = new THREE.Mesh(new THREE.RingGeometry(R + 0.004, R + 0.014, SEG), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false, fog: false, toneMapped: false }));
+  track.position.z = DEPTH / 2 + 0.001;
+  track.renderOrder = 10;
   const ringGeo = new THREE.RingGeometry(R + 0.005, R + 0.013, SEG, 1, Math.PI / 2, Math.PI * 2);
-  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide }));
+  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffc61a, transparent: true, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide }));
   ring.scale.x = -1; // so it fills clockwise (both sides drawn, as this turns it over)
-  ring.position.z = DEPTH / 2 + 0.001;
-  ring.renderOrder = 10;
+  ring.position.z = DEPTH / 2 + 0.0015;
+  ring.renderOrder = 11;
   ringGeo.setDrawRange(0, 0);
-  button.add(body, faceMesh, halo, ring);
+  button.add(body, faceMesh, halo, track, ring);
   root.add(button);
 
   const inv = new THREE.Matrix4(), _p = new THREE.Vector3();
@@ -158,7 +160,7 @@ export function createBackButton({ label = 'Back' } = {}) {
     faceMat.color.setHex(lit ? 0xffffff : 0xd8d8d8);
     button.position.z = rest - (holding ? 0.006 : 0);
     button.scale.setScalar(lit ? 1.06 : 1);
-    setHint(holding || held > 0.05 ? hints.held : hints.idle);
+    setActive(holding || held > 0.05);
     return done;
   }
 
@@ -168,5 +170,27 @@ export function createBackButton({ label = 'Back' } = {}) {
     return root.visible && raycaster.intersectObjects(meshes, false).length > 0;
   }
 
-  return { root, show, update, hit, get visible() { return root.visible; }, get progress() { return held; } };
+  // Stand it `angle` degrees to the right of `forward` (horizontal) from the
+  // head, `distance` metres out and `below` metres under the eyes, facing
+  // them, as the opening's Quit does. Both in world space; it keeps that
+  // place in its parent from then on.
+  const UP = new THREE.Vector3(0, 1, 0), _d = new THREE.Vector3(), _at = new THREE.Vector3();
+  const _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ');
+  function place(head, forward, { angle = 65, distance = 0.55, below = 0.25 } = {}) {
+    const dir = _d.set(forward.x, 0, forward.z).normalize().applyAxisAngle(UP, -THREE.MathUtils.degToRad(angle));
+    const at = _at.copy(head).addScaledVector(dir, distance);
+    at.y = head.y - below;
+    _e.set(-Math.atan2(below, distance), Math.atan2(-dir.x, -dir.z), 0);
+    _q.setFromEuler(_e);
+    const parent = root.parent;
+    if (parent) {
+      parent.updateWorldMatrix(true, false);
+      parent.worldToLocal(at);
+      _q.premultiply(parent.getWorldQuaternion(_pq).invert());
+    }
+    root.position.copy(at);
+    root.quaternion.copy(_q);
+  }
+
+  return { root, show, update, hit, place, get visible() { return root.visible; }, get progress() { return held; } };
 }

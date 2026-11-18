@@ -1,9 +1,10 @@
 # Jane (AI host)
 
 Jane greets the player after the portal flight, offers the 180° video, chats
-after it, and sends the player to the jetski race: a toy jetski floats in front
-of them, and touching it starts the race in the same session. When they come
-back she reacts to the result and offers another lap. The figure is a placeholder
+after it, and sends the player to the jetski race: a toy jetski stands where the
+video's play button first stood, and touching it starts the race in the same
+session. When they come back she reacts to the result and offers another lap,
+with the play button and the jetski side by side on that spot. The figure is a placeholder
 (`avatar.js`) until her MetaHuman is exported; the replacement only has to
 implement `setMouth`, `setMood`, `gesture`, `setListening` and `lookAt`.
 
@@ -12,7 +13,7 @@ implement `setMouth`, `setMood`, `gesture`, `setListening` and `lookAt`.
 | `jane.js` | Flow (listens to `scene:arrived`, `scene:video-start`, `scene:video-end`, `scene:jetski-end` from `main.js`), live conversation, scripted fallback, lip flap |
 | `persona.js` | Her identity: base prompt, per-phase prompts, first lines, tool list, scripted lines, her lines after the race |
 | `avatar.js` | Placeholder figure with mouth, blinks, eye contact, moods and gestures |
-| `ui.js` | Caption panel over her head and the floating toy jetski that starts the race (touch it, pinch or pull the trigger while pointing at it, or click it in the preview) |
+| `ui.js` | Caption panel over her head and the toy jetski that starts the race (touch it, pinch or pull the trigger while pointing at it, or click it in the preview); it stands still, turning slowly in place |
 | `config.js` | `AGENT_ID` and placement |
 | `../vendor/elevenlabs-client.js` | `@elevenlabs/client` bundled as one ES module |
 | `../tools/jane/create-agent.mjs` | Creates or updates the ElevenLabs agent (and an optional instant voice clone) |
