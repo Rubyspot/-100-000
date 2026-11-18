@@ -63,7 +63,11 @@ const VIDEO_LAST_RESORT = IS_HEADSET && !params.get('video') ? [COPY_SRC] : [];
 // and palms all round (400k of its 3.7M splats, no SH, shifted so the deck is
 // at the real floor). ?scan=<url> and ?floor=<metres> override.
 const STAGE = params.get('world') === 'stage';
-const ROOM_URL = params.get('scan') || (STAGE ? './assets/stage-400k.sog' : './assets/room-400k.sog');
+// The room is Ilia's "Room splat 2" (Nov 18, 19:38 UTC: the same room in the
+// same place, re-made with fewer see-through spots; 400k of its 4.9M splats,
+// no SH). ?room=1 brings back the first room (assets/room-400k.sog).
+const ROOM_FILE = params.get('room') === '1' ? './assets/room-400k.sog' : './assets/room2-400k.sog';
+const ROOM_URL = params.get('scan') || (STAGE ? './assets/stage-400k.sog' : ROOM_FILE);
 const FLOOR = num('floor', STAGE ? 0 : 0.07);
 // Quest settings Ilia picked on the Jane splat test page (Nov 16): splat
 // budget 500k, 80% resolution, strongest fixed foveation, and the "fast"
