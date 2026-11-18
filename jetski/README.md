@@ -27,7 +27,9 @@ pits in patches, a ledge here and there, rain streaks and rust stains, and up cl
 stone (scanned normal maps in `assets/stone`, CC0: a cliff face's runnels and ribs on the sides, rough
 stone on top, grit in the sand), darker in its cracks; round leaf clumps with ragged outlines; palms with
 ringed trunks and arching fronds that let the sun through; sand beaches; and glossy inflatables in pink
-and yellow (the arches, ramps, floats, parasols, buoys), smooth and catching the sky like PVC.
+and yellow (the arches, ramps, floats, parasols, buoys), smooth and catching the sky like PVC. The land
+is closed everywhere you can look from the water: the canal walls dip under the sea at the canals' mouths
+instead of ending in an open cut.
 
 The light is a sunset, as in the first builds (`sky.js`): a peach horizon, a rose band, violet and a deep
 blue zenith with clouds lit pink from below, and a low sun ahead and to the left of the start straight.
@@ -49,7 +51,11 @@ physics.
 - **The right hand is the throttle.** Make a fist (or pinch) on the right grip to go. The index finger is
   the lever, as on a real jetski: wrapped around the grip it is full throttle, lifted off it eases off to
   nothing while the other fingers keep hold. Opening the hand lets go. The bar comes to your hand if you
-  grab a little off the grip, and a glove shows while you hold on. `?throttle=any` lets either hand do it.
+  grab a little off the grip. `?throttle=any` lets either hand do it.
+- **Your hands look like hands**: the opening's hand meshes (`../hands.js`), posed from the tracked joints.
+  A fist on a grip is drawn closed round it, moving with the bar as the hull pitches, rolls and steers,
+  and slides back to where your hand is when you let go. (If the meshes can't load, yellow dots and
+  gloves stand in.)
 - **One hand is enough to steer**, either one: turn the fist like a dial, like a handlebar, or push the
   grip forward and back around the bar. They add up, and the pose you grab with is the neutral. A left
   hand alone holds and steers; the dash then says which hand makes it go.
@@ -67,6 +73,9 @@ physics.
   the handlebar between the hands from the start line to the finish. Hold a fingertip or a controller on
   it for a second and a half (a gold ring fills and the word turns gold), or hold B or Esc, to leave the
   ride; a click does it in the flat preview. In the opening it goes back to Jane's room, on its own page it ends the session.
+- **Quit**: the opening's Quit button (`../quit-button.js`, gold with a power sign) rides along at your
+  right, 95° round from the jetski's heading, 55 cm out and 25 cm below the eyes, the whole time you are
+  in the race. Held for a second and a half it ends the whole experience (the headset session).
 
 ## Mechanics
 
@@ -80,7 +89,10 @@ physics.
   step, a wall hit three. The combo also adds a little thrust.
 - **Things in the water** are solid: the buoys, the pool floats, the gates' floats and the ramps' side
   tubes. Buoys and floats are moored, so a hull knocks them aside (with a hollow bonk and a splash) and
-  they swing back; a hard hit costs three combo steps like a wall. A jump clears them.
+  they swing back; a buoy hit head on goes under the hull and pops up behind. A ramp's side tube is
+  smooth, so a hull that comes up a ramp off its middle slides along it. A hard hit costs three combo
+  steps like a wall. A jump clears them. The racing line (and the bills on it) runs straight for 30 m
+  before each ramp and through the middle of each arch, and Jane aims at the middle of a ramp's lip.
 - **Golden bills** hang in the air past each of the four ramps: $10,000 and a boost. Long jumps boost too.
 - **$100,000** is meant to come with ease, as in the song: a first lap that takes a bit over half of the
   bills gets there, and a clean lap triples it. Jane cheers at $100,000 and again at $200,000.
@@ -122,7 +134,8 @@ enclosed. Jane's engine and the gulls are positioned in space. The Crispy J play
   keyboard. `hud.js`: the interface; `back-button.js`: Back on the bar. `gulls.js`: flock (banking into
   turns, gliding with bursts of flapping), bills, combo. `effects.js`: wake, spray (sheets off the bow, the
   rooster tail, curtains in hard turns, landing bursts; drops and mist), speed streaks, confetti.
-  `sfx.js`: sound; `engine-worklet.js`: the engine. `models.js`: jetski, gloves, Jane.
+  `sfx.js`: sound; `engine-worklet.js`: the engine. `models.js`: jetski, gloves, Jane. The hands and
+  Quit are the opening's own (`../hands.js`, `../quit-button.js`).
 - `assets/stone`: the stone and sand relief (CC0, see its README). `assets/bill`: the $100 bill.
 
 ## URL options (standalone page)
@@ -132,7 +145,8 @@ enclosed. Jane's engine and the gulls are positioned in space. The Crispy J play
 (`=jane` looks at her), `?map`, `?at=N` (start at control point N), `?debug` (fps on the dash,
 `window.simulate(seconds)`), `?bar=0.36,0.42`, `?riser=0.12`, `?steer=1.3` (steering gain),
 `?throttle=any` (either hand is the throttle), `?bill=0.9` (width of a bill, metres), `?fb=0.9` (headset resolution scale),
-`?music=0`, `?vignette=0`, `?streaks=0`, `?heave=0` (the view keeps its height), `?jane=simple` (no scan).
+`?music=0`, `?vignette=0`, `?streaks=0`, `?heave=0` (the view keeps its height), `?jane=simple` (no scan),
+`?quit=95` (Quit's angle to the right of the heading; `=off` leaves it out).
 
 In the opening: `?bar=`, `?riser=`, `?steer=`, `?throttle=any`, `?vignette=0`, `?streaks=0`, `?heave=0`,
 `?music=0`, `?debug` and `?autopilot` work the same way, `?aa=1` turns multisampling on for the session, and `?race=0` leaves the

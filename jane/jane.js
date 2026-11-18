@@ -8,6 +8,8 @@
 //   scene:jetski-end  -> back in the room, the toy jetski is there at once,
 //                        with the video's play ball beside it, so the guest
 //                        can ride again or watch again; she reacts to the result
+//   scene:session-end -> the headset session is over (Quit, or the Meta
+//                        button): she stops talking and goes
 //
 // Live mode talks through an ElevenLabs agent (speech-to-text, LLM and her
 // voice, all streamed, so she starts answering the moment you stop talking).
@@ -281,6 +283,16 @@ export function createJane(api) {
   // headset's camera is still out on the course: wait until the room has
   // been drawn once before placing anything by where the player's head is.
   addEventListener('scene:jetski-end', (e) => { st.backResult = e.detail || null; st.backIn = 2; });
+  // The session is over: no more talking on the page left behind.
+  addEventListener('scene:session-end', () => {
+    st.phase = 'idle'; st.backIn = 0; st.leaving = false; st.talking = false;
+    scriptRun++;
+    clearTimeout(scriptTimer);
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    stopLive();
+    root.visible = false;
+    jetskiBtn.userData.hide();
+  });
 
   // ---------- per frame ----------
 

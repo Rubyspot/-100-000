@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import { createSky, SUN_DIR, HAZE_COLOR } from './sky.js';
 import { createOcean } from './ocean.js';
-import { buildWorld, loadWorldTextures, YELLOW } from './world.js';
+import { buildWorld, loadWorldTextures, YELLOW, RAMP_LEN } from './world.js';
 import { Craft, bumpCrafts } from './craft.js';
 import { loadJetski, makeJetski, makeGloves, makeJaneRider, makeSimpleRider, SEAT, JET_BLACK } from './models.js';
 import { createWake, createSpray, createStreaks, createConfetti } from './effects.js';
@@ -25,6 +25,8 @@ import { Sfx } from './sfx.js';
 import { createControls } from './controls.js';
 import { createHud, loadFonts, money, clock, COLORS } from './hud.js';
 import { loadGullAssets, createGulls, MAX_COMBO, STEP_VALUE } from './gulls.js';
+import { createHands } from '../hands.js';
+import { createQuitButton } from '../quit-button.js';
 
 export const GOAL = 100000;
 const START_BACK = 12;     // the grid is this far before the start arch, metres
@@ -44,6 +46,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     steer: 1.3,            // how strongly the hands steer (1 = full lock at a 35 degree turn of the fist)
     bill: 0.9,             // width of a bill, metres
     throttle: 'right',     // which hand is the throttle: 'right' or 'any'
+    quit: 95,              // Quit this many degrees right of the heading (null: none)
     exposure: 1.0,
     ...options,
   };
@@ -57,6 +60,14 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
   const holder = new THREE.Group();
   const rig = new THREE.Group();
   scene.add(holder); holder.add(rig); rig.add(camera);
+  // Hands that look like hands, and the way out of the whole experience: the
+  // opening's hand meshes and Quit button (hands.js, quit-button.js), so the
+  // race has the same ones. A hand on a grip is drawn closed round it. Quit
+  // stands 95 degrees to the right of the jetski's heading, within reach a
+  // little below the eyes, and rides along.
+  const handMeshes = createHands({ parent: rig });
+  const quit = createQuitButton();
+  holder.add(quit.root);
   const listener = new THREE.AudioListener();
   camera.add(listener);
   scene.fog = new THREE.FogExp2(HAZE_COLOR.getHex(), 0.0019);
@@ -132,6 +143,9 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     controls = createControls({ renderer, holder, rig, options: { gain: O.steer, throttleHand: O.throttle } });
     hud = createHud({ holder, camera, font, eyeY, embedded, goal: GOAL, maxCombo: MAX_COMBO });
     hud.attach(player.ski);
+    holder.updateMatrixWorld(true);
+    if (O.quit !== null) quit.place(holder.localToWorld(new THREE.Vector3(0, eyeY, 0)), new THREE.Vector3(0, 0, -1).transformDirection(holder.matrixWorld), { angle: O.quit });
+    await handMeshes.ready;
     gulls = createGulls({ scene, world, ocean, sky, listener, billWidth: O.bill, onPickup, onMiss });
     built = true;
     resetRace();
@@ -140,7 +154,11 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     // Compile the shaders and upload the buffers now, not on the first frame in the headset.
     const tone = renderer.toneMapping, exp = renderer.toneMappingExposure;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = O.exposure;
+    // (The hands and Quit are hidden until the headset is on; shown for this.)
+    const unseen = [...handMeshes.group.children, quit.root];
+    for (const o of unseen) o.visible = true;
     try { await renderer.compileAsync(scene, camera); } catch { /* compiled on first use instead */ }
+    for (const o of unseen) o.visible = false;
     if (embedded && !renderer.xr.isPresenting) {
       const size = renderer.getSize(new THREE.Vector2());
       renderer.setScissorTest(true); renderer.setScissor(0, 0, 1, 1);
@@ -274,15 +292,38 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     state.idx = n.idx; state.dist += delta * course.step; state.lat = n.lat; state.off = n.dist;
   }
 
+  // The ramp a rider at sample i is heading into: its middle is this many
+  // metres ahead (one just passed counts, down to -10 m).
+  const nextRamp = { ramp: null, d: Infinity };
+  function rampAhead(i) {
+    nextRamp.ramp = null; nextRamp.d = Infinity;
+    for (const rp of world.ramps) {
+      let d = (rp.idx - i) % course.SAMPLES;
+      if (d < 0) d += course.SAMPLES;
+      if (d > course.SAMPLES / 2) d -= course.SAMPLES;
+      d *= course.step;
+      if (d > -10 && d < nextRamp.d) { nextRamp.d = d; nextRamp.ramp = rp; }
+    }
+    return nextRamp;
+  }
+
   // Steer a craft along the racing line (Jane, and the autopilot used in
   // tests): aim at a point ahead on the line, and close the sideways gap.
+  // From 30 m before a ramp's foot to its lip, aim at the middle of its lip
+  // instead, so the ramp is taken in the middle and not on its side tubes.
   function follow(c, state, lat, gain = 2.6) {
     const look = 6 + c.speed * 0.5;
     const i = idxAt(state.dist + look);
     const p = course.pts[i], r = course.rights[i];
-    const tx = p.x + r.x * (course.lineLat[i] + lat), tz = p.z + r.z * (course.lineLat[i] + lat);
+    let tx = p.x + r.x * (course.lineLat[i] + lat), tz = p.z + r.z * (course.lineLat[i] + lat);
+    let cross = state.lat - (course.lineLat[state.idx] + lat);
+    const { ramp, d } = rampAhead(state.idx);
+    if (ramp && d - RAMP_LEN / 2 < 30 && d + RAMP_LEN / 2 > 2) {
+      const side = clamp(lat, -1.4, 1.4);
+      tx = ramp.start.x + ramp.t.x * RAMP_LEN + ramp.r.x * side; tz = ramp.start.z + ramp.t.z * RAMP_LEN + ramp.r.z * side;
+      cross = 0;
+    }
     const rel = wrapAngle(Math.atan2(-(tx - c.x), -(tz - c.z)) - c.yaw);
-    const cross = state.lat - (course.lineLat[state.idx] + lat);
     return clamp(rel * gain + clamp(cross, -4, 4) * 0.09 - c.yawRate * 0.28, -1, 1);
   }
 
@@ -296,7 +337,9 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     const dx = pc.x - c.x, dz = pc.z - c.z;
     const parked = race.state === 'done';
     let side = 0;
-    if (Math.hypot(dx, dz) < (parked ? 26 : 9)) side = (dx * r.x + dz * r.z > 0 ? -1 : 1) * Math.min(parked ? 3.2 : 2.2, Math.max(0, course.half[i] - 4));
+    // (Near a ramp she keeps to her half of it, clear of its side tubes.)
+    const room = rampAhead(i).d < 40 ? 1.4 : Math.min(parked ? 3.2 : 2.2, Math.max(0, course.half[i] - 4));
+    if (Math.hypot(dx, dz) < (parked ? 26 : 9)) side = (dx * r.x + dz * r.z > 0 ? -1 : 1) * room;
     ai.side += (side - ai.side) * Math.min(1, dt * 1.5);
     let throttle = 1;
     c.thrustScale = 0.97;
@@ -431,6 +474,33 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     holder.rotation.y = pc.yaw;
   }
 
+  // A hand that holds a grip is drawn on it: moved so the hole in its fist
+  // (the middle of the middle finger's joints) is on the grip, wherever the
+  // bar is with the hull's pitch, roll and steering. It slides on and off.
+  const fitStep = new THREE.Vector3(), _hole = new THREE.Vector3(), _grip = new THREE.Vector3(), _rigInv = new THREE.Quaternion();
+  const snaps = [{ k: 0, to: new THREE.Vector3() }, { k: 0, to: new THREE.Vector3() }];
+  const FIST_HOLE = [11, 12, 13, 14], PINCH_HOLE = [4, 9]; // joints: middle finger; thumb and index tips
+  function seatHands(dt) {
+    if (!handMeshes.loaded) return;
+    holder.updateWorldMatrix(true, false);
+    _rigInv.copy(rig.quaternion).invert();
+    for (const h of controls.hands) {
+      const sn = snaps[h.index], on = h.seen && h.grabbing;
+      sn.k = on ? Math.min(1, sn.k + dt / 0.12) : Math.max(0, sn.k - dt / 0.15);
+      if (on) {
+        // (A pinch holds it between the thumb and index fingertips.)
+        const ids = h.closed || !h.pinching ? FIST_HOLE : PINCH_HOLE;
+        _hole.set(0, 0, 0);
+        for (const j of ids) _hole.x += h.joints[j * 3], _hole.y += h.joints[j * 3 + 1], _hole.z += h.joints[j * 3 + 2];
+        _hole.multiplyScalar(1 / ids.length).add(fitStep); // where it is drawn (the rig moved by fitStep since)
+        player.ski.grips[h.index].getWorldPosition(_grip);
+        sn.to.copy(holder.worldToLocal(_grip)).sub(_hole).applyQuaternion(_rigInv);
+      }
+      const k = sn.k * sn.k * (3 - 2 * sn.k);
+      handMeshes.offset[h.side].copy(sn.to).multiplyScalar(k);
+    }
+  }
+
   function frame(time, xrFrame) {
     const dt = lastTime ? clamp((time - lastTime) / 1000, 0.0005, 1 / 30) : 1 / 72;
     lastTime = time;
@@ -467,11 +537,15 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
 
     const input = controls.update(dt, now, xrFrame, layout, race.state === 'ready' || race.state === 'countdown');
     // Ease in the shift that brings the bar to the hand.
+    fitStep.set(0, 0, 0);
     if (layout.fit.lengthSq() > 1e-8) {
-      const stepV = _a.copy(layout.fit).multiplyScalar(Math.min(1, dt * 10));
-      rig.position.add(stepV); layout.fit.sub(stepV);
+      fitStep.copy(layout.fit).multiplyScalar(Math.min(1, dt * 10));
+      rig.position.add(fitStep); layout.fit.sub(fitStep);
     }
-    player.gloves[0].visible = input.gripL; player.gloves[1].visible = input.gripR;
+    // The yellow dots and gloves only stand in if the hand meshes can't load.
+    const meshes = handMeshes.loaded;
+    if (meshes) for (const h of controls.hands) h.dots.visible = false;
+    player.gloves[0].visible = input.gripL && !meshes; player.gloves[1].visible = input.gripR && !meshes;
 
     // State machine.
     if (race.state === 'ready') {
@@ -506,6 +580,13 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     const onBike = race.state === 'ready' || race.state === 'countdown' || race.state === 'race';
     hud.back.show(onBike);
     if (onBike && !exiting && !pendingReset && hud.back.update(input.pointers, input.back, dt, now)) choose('exit');
+    // Quit, the whole experience, at any point of the ride (in the headset).
+    // Here, before the jetski moves on, where the fingertips were read.
+    quit.show(xr && active && O.quit !== null);
+    if (quit.update(input.pointers, false, dt, now)) {
+      const session = renderer.xr.getSession();
+      if (session) session.end().catch(() => {});
+    }
 
     physics(dt, input);
 
@@ -551,6 +632,8 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     if (exiting && fadeV >= 0.98) { exiting = false; stop(); if (onExit) onExit(summary()); }
 
     placeAll(dt);
+    seatHands(dt);
+    handMeshes.update(xr ? xrFrame : null, xr ? renderer.xr.getReferenceSpace() : null);
 
     // Water effects and sound.
     const boostK = Math.min(1, pc.boost / 0.5);
@@ -698,6 +781,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     race.state = 'off';
     setRate(false);
     controls.listen(false); controls.release();
+    quit.show(false);
     renderer.domElement.removeEventListener('click', onClick);
     if (hud) hud.gripHint(false);
     if (sfx) sfx.setActive(false);
@@ -721,7 +805,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     get active() { return active; },
     get state() { return race.state; },
     summary,
-    debug: { race, ai, player, jane, layout, options: O, get world() { return world; }, get gulls() { return gulls; }, get controls() { return controls; }, get hud() { return hud; }, get sfx() { return sfx; }, get engines() { return [engineP, engineJ]; }, get ocean() { return ocean; }, get sky() { return sky; }, rig, holder, respawn },
+    debug: { race, ai, player, jane, layout, options: O, get world() { return world; }, get gulls() { return gulls; }, get controls() { return controls; }, get hud() { return hud; }, get sfx() { return sfx; }, get engines() { return [engineP, engineJ]; }, get ocean() { return ocean; }, get sky() { return sky; }, rig, holder, respawn, handMeshes, quit },
   };
   return api;
 }

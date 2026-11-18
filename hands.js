@@ -6,6 +6,7 @@
 //   const hands = createHands({ parent: rig }); // what the XR reference space maps to
 //   const tips = hands.update(frame, referenceSpace); // each XR frame: index fingertips, world space
 //   hands.visible = false;                      // e.g. in passthrough, where the real hands show
+//   hands.offset.right.set(x, y, z);            // moves a drawn hand (parent space), e.g. onto a grip it holds
 //
 // Without hand tracking (controllers, or a flat screen) nothing is drawn.
 import * as THREE from 'three';
@@ -39,6 +40,9 @@ export function createHands({ parent, color = SKIN, path = new URL('./vendor/han
   const tips = [];
   const tip = new THREE.Vector3();
   const seen = { left: false, right: false };
+  // Where each hand is drawn, relative to where it is tracked (zero unless
+  // set). The fingertips returned stay the tracked ones.
+  const offset = { left: new THREE.Vector3(), right: new THREE.Vector3() };
 
   // Poses the hand meshes from this frame's joints and returns the index
   // fingertips in world space (empty without hand tracking).
@@ -66,12 +70,17 @@ export function createHands({ parent, color = SKIN, path = new URL('./vendor/han
         seen[source.handedness] = true;
       }
     }
-    for (const side of ['left', 'right']) if (hands[side]) hands[side].root.visible = seen[side];
+    for (const side of ['left', 'right']) {
+      if (!hands[side]) continue;
+      hands[side].root.visible = seen[side];
+      hands[side].root.position.copy(offset[side]);
+    }
     return tips;
   }
 
   return {
-    group, ready, update, tips,
+    group, ready, update, tips, offset, seen,
+    get loaded() { return !!(hands.left && hands.right); }, // both meshes are in
     get visible() { return group.visible; },
     set visible(on) { group.visible = on; },
   };
