@@ -11,15 +11,23 @@ pose. On arrival she goes through her other poses, 3 s each, changing through a
 swirl of particles: surfboard, singing into a microphone, then the heart pose,
 where she stays. The video's play button comes up as she changes into that last
 pose; it starts the 180° video, and the song fades out when it starts. After the
-video she comes back in the jetski pose and offers the jetski race: a toy jetski
-floats in front of the player, and touching it starts the race
-([jetski/](jetski/README.md)) in the same session. Leaving the race comes back to
-the room, where she reacts to the result, and the play button floats beside the
-jetski to watch the video again.
+video she comes back in the jetski pose and offers the jetski race, while "On My
+Own" plays quietly: a toy jetski stands where the play button was, and touching
+it starts the race ([jetski/](jetski/README.md)) in the same session. Leaving the
+race comes back to the room and to "On My Own", where she reacts to the result,
+and the play button and the jetski stand side by side on that spot to watch the
+video again or ride again.
+
+The buttons stand still (Ilia, Nov 18: "keep it at the same spot"): the play
+button and the toy jetski have one spot, 0.62 m beyond where the flight ends
+and 0.2 m below the eyes, turned once to face the player; after a race they
+stand 0.19 m either side of it, the play button on the left.
 
 All through the session a **Quit** button stands at the player's right
 (`quit-button.js`), 95° round from the way the room faces, just past the right
-edge of the 180 picture, 0.55 m out and 0.25 m below the eyes: a fingertip or a
+edge of the 180 picture, 0.55 m out and 0.25 m below the eyes. It is put there
+when the experience starts and travels with the player, and nothing moves it
+after that, the video included: a fingertip or a
 controller on it, or the trigger while pointing at it, held for 1.5 s while a
 gold ring fills, ends the session (`?quit=95` sets the angle, `?quit=off` leaves
 it out). Inside the room and during the video the player's hands are drawn as
@@ -57,10 +65,11 @@ URL options: `?debug` (fps and video source label in headset), `?to=desk` (fly t
 (share of her splats that fly as sparks when she transforms, 1 = all), `?poses=yoga,surf,sing,heart` (her
 poses before the video, in order), `?after=jetski` (her pose after it), `?hold=3` (seconds on each pose),
 `?morph=2` (seconds each change takes), `?outside=<url>` (another 360 image outside the room; `off` keeps
-a plain sky), `?outsideturn=90` (turns it, degrees), `?controls=0.52,0.36` (the video controls this far
+a plain sky), `?outsideturn=90` (turns it, degrees), `?controls=0.3,0.28` (the video controls this far
 below the eyes and out from them, metres), `?fly=2.4` and `?speed=0.3` (the flight through the portal:
 metres and m/s), `?quit=95` (the quit button's angle to the right; `off` hides it), `?music=0.55`
-(song volume, 0 mutes), `?jane=off` (no Jane), `?autostart` (flat preview), `?race=0` (leave the jetski
+(song volume, 0 mutes), `?between=0.5` ("On My Own" after the video and the race, as a part of that
+volume; 0 leaves it out), `?jane=off` (no Jane), `?autostart` (flat preview), `?race=0` (leave the jetski
 race out; the floating jetski then opens `/jetski/`), `?aa=1` (multisampling for the whole session: off
 by default because it costs frame rate with splats, but the race's edges are smoother with it),
 `?steer=1.3` and `?throttle=any` (the race's steering gain and which hand is the throttle, see
@@ -73,7 +82,7 @@ Run locally: `python3 -m http.server` in this folder, open http://localhost:8000
 When Jane changes into her last pose, the play button comes up in front of the
 player (`play-button.js`: a 20 cm gold button with a white arrow on a teal face,
 a glow that breathes and a ring that ripples out, over a plate saying "Play the
-video"; it lights up as a hand comes near). Touch it (or point a controller at
+video"; it lights up as a hand comes near, and it stands still). Touch it (or point a controller at
 it and pull the trigger) to play the 180° side-by-side video. On Quest it plays on
 a WebXR equirect media layer (sharp, nearly free on the GPU); elsewhere it falls
 back to a textured half sphere. Around the picture is a dark surround that
@@ -86,9 +95,9 @@ rate and `?hz=0` leaves it alone.
 While it plays, three palm-sized buttons (8.4 cm) sit at the lower edge of the
 picture, within reach (`video-controls.js`): back 10 s, pause / play and close,
 with the playing time and the source's tag (8K+, 8K or 4K) above them. They stay
-on the whole time (Ilia, Nov 17), placed when the video starts low, out of the
-view (Ilia, Nov 18): 0.52 m under the eyes and 0.36 m out toward the middle of
-the picture, about 55° down (`?controls=0.52,0.36`).
+on the whole time (Ilia, Nov 17), placed when the video starts close to the body
+so they cover little of the picture (Ilia, Nov 18): 0.3 m under the eyes and
+0.28 m out toward the middle of the picture, about 47° down (`?controls=0.3,0.28`).
 Press one with a fingertip, or point a controller (or a pinching hand) at it and
 pull the trigger (pinch); on a flat screen, click. Close goes back to the room
 and Jane.
@@ -147,7 +156,10 @@ Other options: `?speed=0.3` sets the flight speed in m/s (constant), `?fly=2.4` 
 `scene`, `renderer`, `camera`, `rig` (camera parent; the flight moves it),
 `anchor`, `listener`, `showPlayBall(on, at)` (`at`: a world position, or its
 usual spot; without `at`, before the video it waits for Jane's last pose),
-`playVideo()`, `arrivalPose()`,
+`buttonSpot(offset)` (the buttons' spot in world space, `offset` metres to its
+right, negative to its left: `{ position, eyes, gap }`, where `eyes` is the point
+a button there faces and `gap` is 0.19, how far either side of the spot the play
+button and the jetski stand after a race), `playVideo()`, `arrivalPose()`,
 `startJetski()` (starts the race in this session; false if it isn't loaded) and
 `autoPlayBall` (set false to control when the play ball shows). Window events:
 `scene:arrived`, `scene:video-start`, `scene:video-end`, `scene:jetski-end` (back

@@ -3,13 +3,15 @@
 // across: a polished gold rim with a rounded edge around a deep teal face
 // with a white play arrow, a soft glow that breathes behind it and a ring
 // that ripples out every couple of seconds, over a dark glass plate that
-// says what it does. It floats turned to the viewer; it pops up, lights up
-// and leans in as a hand comes near, and flashes as it is touched.
+// says what it does. It stands still where it is put (Ilia, Nov 18: buttons
+// that drift are hard to press), turned once to face the viewer; it pops
+// up, lights up as a hand comes near, and flashes as it is touched.
 //
 //   const play = createPlayButton();
 //   anchor.add(play.root);
 //   play.setText('Play the video', 'Touch the button');
-//   play.update(t, { appear, press, hover, viewer }); // each frame while shown
+//   play.face(eyes);                                  // once, where it is put
+//   play.update(t, { appear, press, hover });         // each frame while shown
 //   raycaster.intersectObjects(play.hits);            // a click on a screen
 import * as THREE from 'three';
 
@@ -183,18 +185,20 @@ export function createPlayButton() {
   setText('Play the video', 'Touch the button');
 
   const _v = new THREE.Vector3();
+  // Turn it to face `eyes` (a world position), leaning back a little toward
+  // them. Once, where it is put: from then on it stays as it is.
+  function face(eyes) {
+    root.updateWorldMatrix(true, false);
+    _v.setFromMatrixPosition(root.matrixWorld);
+    root.lookAt(_v.set(eyes.x, _v.y + (eyes.y - _v.y) * 0.6, eyes.z));
+  }
+
   // appear 0..1 since it was asked for; press 0..1 since it was touched;
-  // hover 0..1 a hand is near; viewer: world position of the eyes.
-  function update(t, { appear = 1, press = 0, hover = 0, viewer = null } = {}) {
-    if (viewer) {
-      // Face the eyes, staying upright.
-      root.updateWorldMatrix(true, false);
-      _v.setFromMatrixPosition(root.matrixWorld);
-      root.lookAt(_v.set(viewer.x, _v.y + (viewer.y - _v.y) * 0.6, viewer.z));
-    }
+  // hover 0..1 a hand is near.
+  function update(t, { appear = 1, press = 0, hover = 0 } = {}) {
     const pop = easeOutBack(clamp01(appear / 0.75));
     button.scale.setScalar(Math.max(0.0001, pop * (1 + 0.05 * hover + 0.35 * press)));
-    button.position.z = 0.012 * hover - 0.01 * Math.sin(Math.PI * Math.min(1, press * 2));
+    button.position.z = -0.01 * Math.sin(Math.PI * Math.min(1, press * 2));
     const shown = clamp01((appear - 0.35) / 0.4);
     plateMat.opacity = shown * (1 - press);
     plateMesh.visible = plateMat.opacity > 0.01;
@@ -203,5 +207,5 @@ export function createPlayButton() {
     glowMat.uniforms.level.value = clamp01(appear / 0.8) * (1 + 0.8 * hover + 1.6 * press);
   }
 
-  return { root, setText, update, hits: [rim, faceMesh] };
+  return { root, setText, face, update, hits: [rim, faceMesh] };
 }
