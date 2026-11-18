@@ -3,34 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>$100,000</title>
+<title>$100,000 musical experience</title>
 <style>
+  /* The start card in the jetski race's style (jetski/index.html), over Ilia's
+     picture of the room with Jane (assets/start.jpg). */
+  @font-face { font-family: Fredoka; font-weight: 600; src: url(./jetski/assets/fonts/fredoka-latin-600-normal.woff2) format("woff2"); font-display: swap; }
+  @font-face { font-family: Fredoka; font-weight: 700; src: url(./jetski/assets/fonts/fredoka-latin-700-normal.woff2) format("woff2"); font-display: swap; }
   :root {
-    --bg: #0d1412;
-    --panel: #15211d;
-    --fg: #eef3ea;
-    --muted: #9fb2a6;
-    --money: #8fd18a;
-    --gold: #f2c45a;
+    --plum: #2a1030;
+    --pink: #ff4fa3;
+    --yellow: #ffd23f;
+    --cream: #fff6e0;
+    --muted: #e7c9dc;
   }
-  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
-    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  html, body { height: 100%; margin: 0; background: #241016; color: var(--cream);
+    font: 600 16px/1.45 Fredoka, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   canvas { display: block; position: fixed; inset: 0; }
-  #ui { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
+  /* The picture fills the screen behind the card, which sits left of the
+     middle so Jane, on the right, stays in view; on a tall screen it sits at
+     the bottom. */
+  #ui { position: fixed; inset: 0; display: flex; align-items: center; padding: 16px max(16px, 6vw);
+    box-sizing: border-box; overflow-y: auto;
+    background: #241016 url(./assets/start.jpg) center / cover no-repeat; }
   #ui[hidden] { display: none; }
-  .card { background: var(--panel); border: 1px solid #2a3a33; border-radius: 14px;
-    padding: 28px; max-width: 30rem; width: 100%; box-sizing: border-box; }
-  h1 { margin: 0 0 4px; font-size: 2rem; letter-spacing: -0.01em; color: var(--money); }
-  .sub { margin: 0 0 20px; color: var(--muted); }
-  .status { font-variant-numeric: tabular-nums; color: var(--muted); margin: 0 0 18px; min-height: 1.4em; }
-  .row { display: flex; flex-wrap: wrap; gap: 12px; }
-  button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 14px 20px; cursor: pointer; }
+  .card { background: rgba(42, 16, 48, .88); border: 5px solid var(--pink); border-radius: 28px;
+    box-shadow: 0 0 0 3px var(--plum), 8px 10px 0 var(--yellow);
+    padding: 26px 28px 24px; max-width: 24rem; width: 100%; box-sizing: border-box; }
+  h1 { margin: 0 0 22px; font-size: 3rem; line-height: 1; color: var(--yellow);
+    text-shadow: 3px 3px 0 var(--pink); letter-spacing: .01em; }
+  h1 span { display: block; margin-top: 8px; font-size: 1.45rem; line-height: 1.15; color: var(--cream);
+    text-shadow: 2px 2px 0 var(--plum); letter-spacing: .02em; }
+  button { font: inherit; font-weight: 700; border: 3px solid var(--plum); border-radius: 999px; padding: 14px 22px; cursor: pointer; }
   button:disabled { opacity: .45; cursor: default; }
-  #enterXr { background: var(--gold); color: #1d1606; flex: 1 1 14rem; }
-  #preview { background: transparent; color: var(--fg); border: 1px solid #3a4c44; }
-  button:focus-visible { outline: 3px solid var(--money); outline-offset: 2px; }
-  .note { margin: 18px 0 0; font-size: .85rem; color: var(--muted); }
-  #replay { position: fixed; right: 16px; bottom: 16px; background: var(--gold); color: #1d1606; }
+  #enterXr { background: var(--yellow); color: var(--plum); width: 100%; font-size: 1.25rem; }
+  button:focus-visible { outline: 3px solid var(--cream); outline-offset: 2px; }
+  .status { font-variant-numeric: tabular-nums; color: var(--muted); margin: 14px 0 0; font-size: .92rem; }
+  .status:empty { display: none; }
+  #replay { position: fixed; right: 16px; bottom: 16px; background: var(--yellow); color: var(--plum); }
+  @media (max-aspect-ratio: 4/5) {
+    #ui { align-items: flex-end; justify-content: center; padding: 16px; }
+    h1 { font-size: 2.6rem; }
+  }
 </style>
 <script type="importmap">
 { "imports": {
@@ -43,17 +56,21 @@
 <body>
 <div id="ui">
   <div class="card">
-    <h1>$100,000</h1>
-    <p class="sub">Crispy J's music video in mixed reality: the bill, the seagull, the portal, Jane, the 180° video and a jetski race.</p>
+    <h1>$100,000<span>musical experience</span></h1>
+    <button id="enterXr" disabled>Enter VR</button>
     <p class="status" id="status">Loading…</p>
-    <div class="row">
-      <button id="enterXr" disabled>Enter mixed reality</button>
-      <button id="preview" disabled>Preview on this screen</button>
-    </div>
-    <p class="note">Sound on. Stand or sit with about 1.5 m of clear space in front of you. When the gold ball appears, touch it (or point and pinch) to play the video. After the video, touch the little floating jetski to race Jane, sitting down.</p>
   </div>
 </div>
 <button id="replay" hidden>Replay</button>
+<script>
+  // Show any startup error on the card instead of hanging on "Loading…".
+  function showError(msg) {
+    var el = document.getElementById('status');
+    if (el) { el.textContent = 'Error: ' + msg; el.style.color = '#ffd23f'; }
+  }
+  addEventListener('error', function (e) { if (e.message || e.error) showError(e.message || e.error.message); });
+  addEventListener('unhandledrejection', function (e) { showError((e.reason && e.reason.message) || String(e.reason)); });
+</script>
 <script type="module" src="./main.js"></script>
 </body>
 </html>

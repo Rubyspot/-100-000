@@ -71,7 +71,11 @@ hands show.
 - Quest settings are Ilia's picks from the Jane splat test: splat budget 500k, 80% resolution, fixed
   foveation 1, fast preset (`?budget`, `?fb`, `?ffr`, `?stddev`, `?lodpx`, `?sortms`, `?clip`,
   `?minpx`, `?maxpx`, `?cone`, `?behind` override them, as on the test page).
-- Open the page in Quest Browser and tap **Enter mixed reality**.
+- Open the page in Quest Browser and tap **Enter VR** (the experience opens in mixed reality). The
+  start card is in the jetski race's style over Ilia's picture of the room with Jane
+  (`assets/start.jpg`, Nov 18: "keep it simple, just $100,000 musical experience and button enter
+  VR"). Where the browser can't start an immersive session, the same button reads **Preview on this
+  screen** and plays the opening on the page.
 
 URL options: `?debug` (fps and video source label in headset), `?lod=0`
 (disable Spark LoD), `?world=stage` (Ilia's bamboo huts and deck instead of the room), `?scan=<url>`
