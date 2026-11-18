@@ -134,10 +134,10 @@ export function createPlayButton() {
   const rim = new THREE.Mesh(rimGeo, rimMat);
   rim.renderOrder = 7;
 
-  const face = canvasTexture(512, 512);
-  drawFace(face.g, face.w);
-  face.tex.needsUpdate = true;
-  const faceMat = new THREE.MeshBasicMaterial({ map: face.tex, transparent: true, color: 0xe6e6e6, fog: false, toneMapped: false });
+  const faceArt = canvasTexture(512, 512);
+  drawFace(faceArt.g, faceArt.w);
+  faceArt.tex.needsUpdate = true;
+  const faceMat = new THREE.MeshBasicMaterial({ map: faceArt.tex, transparent: true, color: 0xe6e6e6, fog: false, toneMapped: false });
   const faceMesh = new THREE.Mesh(new THREE.CircleGeometry(R, 64), faceMat);
   faceMesh.position.z = e * 0.45 + 0.0005;
   faceMesh.renderOrder = 8;
