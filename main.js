@@ -63,10 +63,10 @@ const VIDEO_LAST_RESORT = IS_HEADSET && !params.get('video') ? [COPY_SRC] : [];
 // and palms all round (400k of its 3.7M splats, no SH, shifted so the deck is
 // at the real floor). ?scan=<url> and ?floor=<metres> override.
 const STAGE = params.get('world') === 'stage';
-// The room is Ilia's "Room splat 2" (Nov 18, 19:38 UTC: the same room in the
-// same place, re-made with fewer see-through spots; 400k of its 4.9M splats,
-// no SH). ?room=1 brings back the first room (assets/room-400k.sog).
-const ROOM_FILE = params.get('room') === '1' ? './assets/room-400k.sog' : './assets/room2-400k.sog';
+// ?room=2 tries Ilia's "Room splat 2" (Nov 18, 19:38 UTC: the same room in
+// the same place; 400k of its 4.9M splats, no SH). Ilia, 19:53: "roll back",
+// so the first room (assets/room-400k.sog) is the room.
+const ROOM_FILE = params.get('room') === '2' ? './assets/room2-400k.sog' : './assets/room-400k.sog';
 const ROOM_URL = params.get('scan') || (STAGE ? './assets/stage-400k.sog' : ROOM_FILE);
 const FLOOR = num('floor', STAGE ? 0 : 0.07);
 // Quest settings Ilia picked on the Jane splat test page (Nov 16): splat
