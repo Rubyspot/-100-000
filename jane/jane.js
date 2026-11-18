@@ -3,8 +3,8 @@
 //   scene:arrived     -> she appears, welcomes the player, offers the video
 //   scene:video-start -> she steps out (the conversation is closed)
 //   scene:video-end   -> she's back, chats, offers the jetski ride: a toy
-//                        jetski stands where the play button first stood
-//                        (api.buttonSpot), touching it starts the race
+//                        jetski stands at once where the play button first
+//                        stood (api.buttonSpot), touching it starts the race
 //                        (api.startJetski, in this same session)
 //   scene:jetski-end  -> back in the room, the toy jetski is there at once,
 //                        with the video's play button beside it, the two
@@ -240,7 +240,8 @@ export function createJane(api) {
         if (st.phase === phase) showJetski();
         return;
       }
-      // The jetski pops up as she starts the line that points at it (her last).
+      // The jetski is up from the start of the phase; this only catches a
+      // phase that began without it.
       if (i === lines.length - 1) showJetski();
       const { text, gesture, mood } = lines[i++];
       if (gesture) avatar.gesture(gesture, st.t);
@@ -260,9 +261,11 @@ export function createJane(api) {
       return;
     }
     place();
-    // Back from a ride: the toy jetski (and the play ball beside it) is there
-    // at once, before she says a word.
-    if (phase === 'back') showJetski();
+    // Back from the video or from a ride, the toy jetski is there at once,
+    // before she says a word (Ilia, Nov 18: "make jetski appear immediately
+    // right after come back from video"); after a ride the play ball stands
+    // beside it.
+    if (phase === 'after' || phase === 'back') showJetski();
     root.visible = true;
     st.shownAt = st.t;
     avatar.gesture('wave', st.t);
