@@ -26,7 +26,7 @@ const MANIFEST_WAIT = 6000; // ms before a host that doesn't answer is passed ov
 const SB_AHEAD = 70e6;      // bytes buffered ahead of the playhead (Chromium caps a video buffer at 150 MB)
 const SB_TOTAL = 125e6;     // bytes buffered in all, ahead and behind
 const MEM_WINDOW = 120e6;   // bytes a source that isn't kept on disk loads ahead of the player
-const DISK_MIN = 300e6;     // sources this big or bigger are kept on disk (Video180's keepFrom)
+const DISK_MIN = 700e6;     // sources this big or bigger are kept on disk (Video180's keepFrom): the 8K ones, not the 0.6 GB 4K
 const WRITES = 2;           // segments being written to disk at a time before loading waits for them
 const LEAD = 40;            // seconds of loading ahead a visitor usually gives before pressing play
 const SAFETY = 0.85;        // share of the measured connection speed that is counted on
@@ -48,6 +48,25 @@ function hash(text) {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
   return (h >>> 0).toString(16);
+}
+
+// Deletes what SegmentStore.open kept on disk for folders that aren't in
+// `known` (an older video that lived somewhere else), so it doesn't take up
+// the room the current one needs.
+async function dropOldCopies(known) {
+  if (!('caches' in window)) return;
+  try {
+    const keep = new Set(known.map((b) => new URL(b, location.href).href));
+    for (const k of await caches.keys()) {
+      const m = /^video\|(.+)\|[0-9a-f]+$/.exec(k);
+      if (m && !keep.has(m[1])) {
+        await caches.delete(k);
+        console.info('video: deleted the disk copy of', m[1]);
+      }
+    }
+  } catch (e) {
+    console.info('video: could not tidy the disk', e);
+  }
 }
 
 // The sources this browser can decode, in the order given. `notes` collects
@@ -462,10 +481,11 @@ function streamSource(video, store, time, onFail = () => {}) {
 // taking over where the last one was; `first` resolves once it has something to show.
 // onDead(): the last source broke, and nothing can play.
 class Sources {
-  constructor(video, bases, { keepFrom, onSource, onSwap, onDead } = {}) {
+  constructor(video, bases, { keepFrom, known, onSource, onSwap, onDead } = {}) {
     this.video = video;
     this.bases = bases;
     this.keepFrom = keepFrom;
+    this.known = known;
     this.onSource = onSource || (() => {});
     this.onSwap = onSwap || (() => {});
     this.onDead = onDead || (() => {});
@@ -502,6 +522,7 @@ class Sources {
   async init() {
     this.sources = await findSources(this.bases, this.notes);
     if (!this.sources.length) throw new Error(`No playable video in ${this.bases.join(', ')}`);
+    if (this.known) await dropOldCopies(this.known);
     this.stores = this.sources.map((s) => new SegmentStore(s, { keepFrom: this.keepFrom }));
     await Promise.all(this.stores.map((s) => s.open()));
   }
@@ -720,12 +741,14 @@ export class Video180 {
   // src: source folders, best first (or one video file). edge: degrees the
   // dark surround reaches into the picture. hz: display refresh rate to ask
   // for while it plays (0: leave it, undefined: one that suits the video).
-  // keepFrom: sources of at least this many bytes are kept on disk.
-  constructor({ renderer, scene, src, edge = 6, hz, keepFrom = DISK_MIN }) {
+  // keepFrom: sources of at least this many bytes are kept on disk. known:
+  // every folder whose disk copy stays (others are deleted); none: all stay.
+  constructor({ renderer, scene, src, edge = 6, hz, keepFrom = DISK_MIN, known }) {
     this.renderer = renderer;
     this.src = src;
     this.hz = hz;
     this.keepFrom = keepFrom;
+    this.known = known;
     this.layer = null;
     this.playing = false;
     this.onEnded = null;
@@ -819,6 +842,7 @@ export class Video180 {
     if (srcs.length === 1 && /\.(mp4|webm|mov)$/i.test(srcs[0])) { this.video.src = srcs[0]; return; }
     const sources = new Sources(this.video, srcs, {
       keepFrom: this.keepFrom,
+      known: this.known,
       // Nothing can play (any more): back to the room.
       onDead: () => this.stop(),
       onSource: (source, notes) => {

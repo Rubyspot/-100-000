@@ -105,23 +105,26 @@ Press one with a fingertip, or point a controller (or a pinching hand) at it and
 pull the trigger (pinch); on a flat screen, click. Close goes back to the room
 and Jane.
 
-Three copies of the video:
+The video is Ilia's full 2:34 cut ("$100,000 Quest.mov", Nov 18), in three
+copies:
 
 - **Original, "8K+"** (`ORIGINAL_SRC` in `main.js`): the master's 8000×4000,
-  60 fps HEVC picture copied bit for bit, about 130 Mbit/s, cut into fMP4
-  segments by `tools/segment-original.sh master.mov out_dir`.
+  60 fps HEVC picture copied bit for bit, about 130 Mbit/s (2.5 GB), cut into
+  fMP4 segments by `tools/segment-original.sh master.mov out_dir`.
 - **Light, "8K"** (`LIGHT_SRC`): the same size and frame rate at about
-  60 Mbit/s, `tools/encode-8k-light.sh master.mov out_dir` (slow: about 2 frames
-  a second on 4 cores).
+  60 Mbit/s (1.2 GB), `tools/encode-8k-light.sh master.mov out_dir` (slow:
+  about 2 frames a second on 4 cores, so over an hour for the full cut).
 - **Copy, "4K"** (`video/` in this repo): 4096×2048 H.264 at the source frame
-  rate, `tools/encode-video.sh master.mov video 30M`.
+  rate (30 Mbit/s, 0.6 GB), `tools/encode-video.sh master.mov video 30M`.
 
 The two 8K ones take about 1 GB and 0.5 GB per minute, more than GitHub Pages
 allows a site, so they are committed to the `video-8k` branch (never merged; its
 README says how to replace the video) and streamed from
-`https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/` and its `light/`
-folder. All three are streamed with Media Source Extensions from `manifest.json`
-(`tools/manifest.py` writes it), so no file exceeds GitHub's 100 MB limit.
+`https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/full/` and its
+`light/` folder (the branch's root and its own `light/` hold the earlier 66 s
+demo). All three are streamed with Media Source Extensions from `manifest.json`
+(`tools/manifest.py` writes it), so no file exceeds GitHub's 100 MB limit. A
+copy that is missing or can't be reached is skipped, and the next one plays.
 
 How the headset keeps the picture smooth (`video.js`):
 
@@ -129,8 +132,10 @@ How the headset keeps the picture smooth (`video.js`):
   ball is touched, the video starts downloading: the best copy that would be
   ready to play through within about 40 s on this connection, otherwise a
   lighter one. The 8K copies are kept on disk (Cache API), so the next visit
-  streams little or nothing. `?preload=0` turns loading ahead off, and
-  `?disk=300` sets the size in MB from which a copy is kept on disk.
+  streams little or nothing, and what was kept for an older video in another
+  folder is deleted. `?preload=0` turns loading ahead off, and `?disk=700` sets
+  the size in MB from which a copy is kept on disk (the 4K copy, 0.6 GB, stays
+  under it, so a flat screen loads at most 120 MB ahead).
 - **It picks when play is pressed.** The best copy that can play to the end
   without stalling is chosen from what is on hand and the measured speed of the
   connection.
