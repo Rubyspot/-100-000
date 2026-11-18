@@ -353,10 +353,10 @@ room.position.y = FLOOR;
 scanGroup.add(room);
 // Ilia, Nov 18: "splat transparent on the floor and some walls". The 400k cut
 // of the scan leaves thin, half-clear splats there, and the 360 render behind
-// the room showed through them. Every room splat is made more solid: its
-// opacity times ?solid=2 (above 1 Spark draws a splat as a fuller disc).
-// ?solid=1 turns it off.
-const SOLID = Math.max(0.1, num('solid', 2));
+// the room showed through them. ?solid=2 makes every room splat more solid:
+// its opacity times 2 (above 1 Spark draws a splat as a fuller disc). Off by
+// default: Ilia, Nov 18, "first option is bad".
+const SOLID = Math.max(0.1, num('solid', 1));
 if (SOLID !== 1) {
   const solidFx = new dyno.Dyno({
     inTypes: { gsplat: dyno.Gsplat },
