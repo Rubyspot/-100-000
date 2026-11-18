@@ -724,7 +724,7 @@ video.ready.catch((err) => console.warn('Video not available:', err.message || e
 // start buttons are unlocked and Jane's scans are in), so by the time the
 // ball is touched most of it is here. ?preload=0 leaves it until then.
 if (params.get('preload') !== '0') {
-  const startButton = $('preview');
+  const startButton = $('enterXr');
   const unlocked = new Promise((done) => {
     const check = () => { if (!startButton.disabled) { watch.disconnect(); done(); } };
     const watch = new MutationObserver(check);
@@ -1523,19 +1523,26 @@ const allReady = sceneReady.then(() => {
 allReady.then(() => {
   loaded = true;
   statusEl.textContent = 'Ready.';
-  $('preview').disabled = false;
   checkXr();
 }).catch((err) => {
   statusEl.textContent = `Could not load the ${err.message || err}`;
 });
 
+// One button on the start card (Ilia, Nov 18: "keep it simple, just $100,000
+// musical experience and button enter VR"). Where the browser can start an
+// immersive session it is Enter VR (the experience opens in mixed reality);
+// anywhere else it plays the preview on this screen.
+let xrOk = false;
 async function checkXr() {
-  const ok = navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-  $('enterXr').disabled = !ok || !loaded;
-  if (!ok) statusEl.textContent = 'Ready. Open this page in Quest Browser to enter mixed reality.';
+  xrOk = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false));
+  const button = $('enterXr');
+  button.textContent = xrOk ? 'Enter VR' : 'Preview on this screen';
+  button.disabled = !loaded;
+  statusEl.textContent = xrOk ? '' : 'Open this page in Quest Browser to enter VR.';
 }
+$('enterXr').addEventListener('click', () => (xrOk ? enterXr() : startPreview()));
 
-$('enterXr').addEventListener('click', async () => {
+async function enterXr() {
   jane.prepareMic(); // ask for the mic now, not inside the headset
   unlockMusic();
   try {
@@ -1581,11 +1588,11 @@ $('enterXr').addEventListener('click', async () => {
     // Give tracking a moment to settle before reading the head pose.
     setTimeout(startSequence, 600);
   } catch (err) {
-    statusEl.textContent = `Could not start mixed reality: ${err.message || err}`;
+    statusEl.textContent = `Could not start: ${err.message || err}`;
   }
-});
+}
 
-$('preview').addEventListener('click', () => {
+function startPreview() {
   jane.prepareMic();
   unlockMusic();
   video.unlock();
@@ -1594,7 +1601,7 @@ $('preview').addEventListener('click', () => {
   camera.position.set(0, 1.6, 0);
   camera.rotation.set(0, 0, 0);
   startSequence();
-});
+}
 $('replay').addEventListener('click', () => {
   video.stop();
   camera.position.set(0, 1.6, 0);
@@ -1614,7 +1621,8 @@ window.__debug = { state, playBall, playButton, video, worldRoot, gull, bill, sp
 // Test hook: freeze the sequence at a given time (seconds).
 window.__setSequenceTime = (T) => { state.fixedT = T; };
 window.__camera = camera;
+window.__startPreview = startPreview;
 
 if (params.has('autostart')) {
-  allReady.then(() => $('preview').click());
+  allReady.then(() => startPreview());
 }
