@@ -11,7 +11,7 @@
 //   distance to the walls, so the rock canals and the arches sound
 //   enclosed; Jane's engine gets an exaggerated Doppler as she passes.
 // - Race sounds: wind that builds with speed, hull slaps, wall scrapes and
-//   thuds, a boost whoosh, a pluck for every bill that climbs with the
+//   thuds, a hollow bonk off buoys and floats, a boost whoosh, a pluck for every bill that climbs with the
 //   combo (with a crisp crackle), a boing off the ramps, gate chimes,
 //   countdown beeps and the finish fanfare.
 // Recorded files can replace the synthesized ones: drop engine.mp3,
@@ -112,6 +112,21 @@ function makeThud(ctx) {
       const t = i / SR;
       lp += 0.08 * ((Math.random() * 2 - 1) - lp);
       d[i] = Math.sin(2 * Math.PI * (70 + 60 * Math.exp(-t / 0.03)) * t) * Math.exp(-t / 0.08) * 0.9 + lp * 3 * Math.exp(-t / 0.05);
+    }
+  });
+}
+
+// A hollow body knocked: a buoy or an inflatable. A thump whose pitch sags,
+// a ring above it, and the smack of the hull at the start.
+function makeBonk(ctx) {
+  return buffer(ctx, 0.5, 1, (d) => {
+    let lp = 0, ph = 0, ph2 = 0;
+    for (let i = 0; i < d.length; i++) {
+      const t = i / SR, f = 150 + 110 * Math.exp(-t / 0.03);
+      ph += (2 * Math.PI * f) / SR; ph2 += (2 * Math.PI * f * 2.7) / SR;
+      lp += 0.25 * ((Math.random() * 2 - 1) - lp);
+      d[i] = (Math.sin(ph) * 0.8 + Math.sin(ph2) * 0.25 * Math.exp(-t / 0.035)) * Math.min(1, t / 0.002) * Math.exp(-t / 0.12)
+        + lp * 1.5 * Math.exp(-t / 0.012);
     }
   });
 }
@@ -266,6 +281,7 @@ export class Sfx {
       splash: makeSplash(ctx),
       cash: makeCash(ctx),
       thud: makeThud(ctx),
+      bonk: makeBonk(ctx),
       slap: makeSlap(ctx),
       whoosh: makeWhoosh(ctx),
       crackle: makeCrackle(ctx),
@@ -403,6 +419,12 @@ export class Sfx {
   }
   boost() { this.play('whoosh', 0.9, 1); }
   thud(v, pos) { this.play('thud', Math.min(1.4, 0.3 + v * 0.12), 0.9 + Math.random() * 0.2, pos); }
+  // Something in the water hit: small buoys ring higher than the big floats.
+  bonk(v, kind, pos) {
+    const rate = { buoy: 1.35, float: 0.8, gate: 0.72, ramp: 0.9 }[kind] || 1;
+    this.play('bonk', Math.min(1.2, 0.25 + v * 0.1), rate * (0.94 + Math.random() * 0.12), pos);
+    if (v > 3) this.splash(Math.min(2, v * 0.15), pos);
+  }
   slap(v) { this.play('slap', Math.min(0.7, 0.12 + v * 0.2), 0.85 + Math.random() * 0.3); }
 
   startAmbience() {

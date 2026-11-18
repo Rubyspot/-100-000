@@ -31,6 +31,9 @@ export function loadJetski() {
 
 const PAINT = { paint: 'paint', trim: 'trim', seat: 'seat', bar: 'bar', dark: 'dark' };
 
+// Gloss black for the parts that used to be pink (Ilia, Nov 17).
+export const JET_BLACK = 0x121316;
+
 // Builds one jetski (forward -Z, hull bottom at y = 0):
 // { root, body (pitch and roll), bar (steering pivot), grips: [left, right],
 //   eye (where a seated rider's eyes are, in the body's space) }.

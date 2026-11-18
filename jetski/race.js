@@ -17,9 +17,9 @@
 import * as THREE from 'three';
 import { createSky, SUN_DIR, HAZE_COLOR } from './sky.js';
 import { createOcean } from './ocean.js';
-import { buildWorld, loadWorldTextures, PINK, YELLOW } from './world.js';
+import { buildWorld, loadWorldTextures, YELLOW } from './world.js';
 import { Craft, bumpCrafts } from './craft.js';
-import { loadJetski, makeJetski, makeGloves, makeJaneRider, makeSimpleRider, SEAT } from './models.js';
+import { loadJetski, makeJetski, makeGloves, makeJaneRider, makeSimpleRider, SEAT, JET_BLACK } from './models.js';
 import { createWake, createSpray, createStreaks, createConfetti } from './effects.js';
 import { Sfx } from './sfx.js';
 import { createControls } from './controls.js';
@@ -98,8 +98,8 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     scene.add(sky.dome, world.group, ocean.mesh);
     scene.environment = sky.env;
 
-    player.ski = makeJetski(YELLOW, sky.env, { riser: O.riser, below: O.below, ahead: O.ahead, accent: PINK });
-    jane.ski = makeJetski(PINK, sky.env, { riser: 0.36, accent: YELLOW });
+    player.ski = makeJetski(YELLOW, sky.env, { riser: O.riser, below: O.below, ahead: O.ahead, accent: JET_BLACK });
+    jane.ski = makeJetski(JET_BLACK, sky.env, { riser: 0.36, accent: YELLOW });
     player.gloves = makeGloves(player.ski);
     scene.add(player.ski.root, jane.ski.root);
     eyeY = player.ski.eye.y;
@@ -346,6 +346,22 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     }
     world.collide(jc, dt);
 
+    // Buoys, pool floats, the gates' floats and the ramps' side tubes.
+    const knock = world.bump(pc, ocean.heightAt(pc.x, pc.z, elapsed));
+    if (knock.hit > 1) {
+      const w = ocean.heightAt(knock.x, knock.z, elapsed);
+      sfx.bonk(knock.hit, knock.kind, null);
+      spray.burst(knock.x, w + 0.25, knock.z, Math.min(2.2, 0.3 + knock.hit * 0.25));
+      if (racing && knock.hit > (knock.kind === 'buoy' || knock.kind === 'float' ? 5 : 3.5)) {
+        race.hits++;
+        gulls.knock();
+        pc.thrustScale = 1 + 0.012 * gulls.state.combo;
+        bark(pick({ buoy: ['Buoys are not bumpers!', 'Bonk!'], float: ['Sorry, flamingo!', 'Mind the pool toys!'], gate: ['Through the arch, not into it!'], ramp: ['Hit the ramp head on!'] }[knock.kind] || ['Oops!']));
+      }
+    }
+    const jKnock = world.bump(jc, ocean.heightAt(jc.x, jc.z, elapsed));
+    if (jKnock.hit > 2) sfx.bonk(jKnock.hit, jKnock.kind, _a.set(jKnock.x, ocean.heightAt(jKnock.x, jKnock.z, elapsed), jKnock.z));
+
     // Ramps: a boing off the lip, a splash and maybe a boost on the way down.
     const onRamp = world.rampHeight(pc.x, pc.z) > -1e3;
     if (race.wasRamp && !onRamp && pc.speed > 7) sfx.boing();
@@ -486,7 +502,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
       race.noGas = xr && input.throttle < 0.05 && pc.speed < 5 ? race.noGas + dt : 0;
     }
     // Back, on the bar, from the start line to the finish (the results have
-    // their own): held for half a second, it leaves the ride.
+    // their own): held for a second and a half, it leaves the ride.
     const onBike = race.state === 'ready' || race.state === 'countdown' || race.state === 'race';
     hud.back.show(onBike);
     if (onBike && !exiting && !pendingReset && hud.back.update(input.pointers, input.back, dt, now)) choose('exit');

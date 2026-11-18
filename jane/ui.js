@@ -1,7 +1,7 @@
 // Small in-headset UI for Jane: a caption panel over her head and the
 // floating jetski she offers after the video (touch it to ride).
 import * as THREE from 'three';
-import { loadJetski, makeJetski } from '../jetski/models.js';
+import { loadJetski, makeJetski, JET_BLACK } from '../jetski/models.js';
 
 function wrap(g, text, maxWidth, maxLines) {
   const words = text.split(/\s+/), lines = [];
@@ -78,9 +78,8 @@ export function makeJetskiButton(label) {
   group.add(toy);
   let model = null;
   loadJetski().then(() => {
-    const ski = makeJetski(0xffd23f, null, { accent: 0xff4fa3 });
+    const ski = makeJetski(0xffd23f, null, { accent: JET_BLACK });
     ski.mats.paint.emissive.set(0xffd23f); ski.mats.paint.emissiveIntensity = 0.14;
-    ski.mats.trim.emissive.set(0xff4fa3); ski.mats.trim.emissiveIntensity = 0.2;
     const box = new THREE.Box3().setFromObject(ski.root);
     const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
     const k = 0.36 / Math.max(size.x, size.z);

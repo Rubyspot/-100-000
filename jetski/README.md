@@ -1,14 +1,15 @@
 # Jetski race
 
 One lap of Crispy J's lagoon against Jane, about two minutes, seated, on a Kawasaki STX-15F in yellow and
-pink. Seagulls fly ahead and drop a trail of $100 bills along the racing line; ride through them and try to
+black. Seagulls fly ahead and drop a trail of $100 bills along the racing line; ride through them and try to
 bank the song's $100,000.
 
 The game is a module (`race.js`). It runs in two places:
 
 - **In the opening** (`../main.js`): after the 180 video Jane offers the ride and a toy jetski floats in front
   of the player. Touching it starts the race in the same session; Back on the handlebar (or BACK on the
-  results board) comes back to her room, where she reacts to the result and offers another lap.
+  results board) comes back to her room, where the toy jetski is waiting at once, with the video's play
+  ball beside it, while she reacts to the result.
 - **On its own page**: `https://rubyspot.github.io/-100-000/jetski/`, **Enter VR** in Quest Browser, or the
   flat preview with the keyboard.
 
@@ -64,8 +65,8 @@ physics.
   Esc exit).
 - **Back**: the 180 video's Back button, in the same place under the view and the same look, stands on
   the handlebar between the hands from the start line to the finish. Hold a fingertip or a controller on
-  it for half a second (a gold ring fills), or hold B or Esc, to leave the ride; a click does it in the flat
-  preview. In the opening it goes back to Jane's room, on its own page it ends the session.
+  it for a second and a half (a gold ring fills and the word turns gold), or hold B or Esc, to leave the
+  ride; a click does it in the flat preview. In the opening it goes back to Jane's room, on its own page it ends the session.
 
 ## Mechanics
 
@@ -77,10 +78,13 @@ physics.
   up to 5 m while your combo is low, so the money comes to a rider who is struggling.
 - **Crispy combo**: each bill in a row is worth $250 more, up to $2,500 at x10. A missed bill costs one
   step, a wall hit three. The combo also adds a little thrust.
+- **Things in the water** are solid: the buoys, the pool floats, the gates' floats and the ramps' side
+  tubes. Buoys and floats are moored, so a hull knocks them aside (with a hollow bonk and a splash) and
+  they swing back; a hard hit costs three combo steps like a wall. A jump clears them.
 - **Golden bills** hang in the air past each of the four ramps: $10,000 and a boost. Long jumps boost too.
 - **$100,000** is meant to come with ease, as in the song: a first lap that takes a bit over half of the
   bills gets there, and a clean lap triples it. Jane cheers at $100,000 and again at $200,000.
-- **Jane** (her first 3D scan, standing on a pink jetski) rides the line with a rubber band: she waits
+- **Jane** (her first 3D scan, standing on a black jetski) rides the line with a rubber band: she waits
   when she is ahead and pushes when she is behind. Her lines show in a speech bubble.
 
 ## Interface

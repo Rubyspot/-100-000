@@ -5,9 +5,9 @@
 //   scene:video-end   -> she's back, chats, offers the jetski ride: a toy
 //                        jetski floats in front of the player, touching it starts
 //                        the race (api.startJetski, in this same session)
-//   scene:jetski-end  -> back in the room, she reacts to the result; the toy
-//                        jetski comes back with the video's play ball beside
-//                        it, so the guest can ride again or watch again
+//   scene:jetski-end  -> back in the room, the toy jetski is there at once,
+//                        with the video's play ball beside it, so the guest
+//                        can ride again or watch again; she reacts to the result
 //
 // Live mode talks through an ElevenLabs agent (speech-to-text, LLM and her
 // voice, all streamed, so she starts answering the moment you stop talking).
@@ -227,6 +227,9 @@ export function createJane(api) {
       return;
     }
     place();
+    // Back from a ride: the toy jetski (and the play ball beside it) is there
+    // at once, before she says a word.
+    if (phase === 'back') showJetski();
     root.visible = true;
     st.shownAt = st.t;
     avatar.gesture('wave', st.t);
@@ -274,13 +277,17 @@ export function createJane(api) {
     jetskiBtn.userData.hide();
   });
   addEventListener('scene:video-end', () => begin('after'));
-  addEventListener('scene:jetski-end', (e) => begin('back', e.detail || null));
+  // The race ends inside its own frame, drawn in its own world, so the
+  // headset's camera is still out on the course: wait until the room has
+  // been drawn once before placing anything by where the player's head is.
+  addEventListener('scene:jetski-end', (e) => { st.backResult = e.detail || null; st.backIn = 2; });
 
   // ---------- per frame ----------
 
   const head = new THREE.Vector3();
   function update(t, dt, frame) {
     st.t = t;
+    if (st.backIn > 0 && --st.backIn === 0) begin('back', st.backResult);
     // The sequence was replayed: step out until the player arrives again.
     if ((root.visible || jetskiBtn.visible) && api.state && api.state.running && !api.state.arrived) {
       st.phase = 'idle';
