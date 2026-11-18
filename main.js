@@ -637,8 +637,10 @@ const rayOf = (obj) => {
 // A way out of the whole experience at the viewer's right (Ilia, Nov 18),
 // 95 degrees round from the way the room faces, so just past the right edge
 // of the 180 picture; held for 1.5 s it ends the session (quit-button.js).
-// It travels with the viewer and is there for the whole session, in the room
-// and during the video. ?quit=95: the angle; ?quit=off leaves it out.
+// It is put there when the experience starts and travels with the viewer;
+// it never moves after that ("keep it at the same spot"), and it is there
+// for the whole session, in the room and during the video. ?quit=95: the
+// angle; ?quit=off leaves it out.
 const QUIT_ANGLE = params.get('quit') === 'off' ? null : num('quit', 95);
 const quitButton = createQuitButton();
 rig.add(quitButton.root);
@@ -700,9 +702,9 @@ if (params.get('preload') !== '0') {
   Promise.allSettled([unlocked, splatJane?.ready]).then(() => video.preload());
 }
 // Back 10 s, pause / play and close, within reach under the middle of the
-// picture for as long as the video plays, low enough to be out of the view
-// (Ilia, Nov 18). ?controls=0.52,0.36: how far below and ahead of the eyes
-// the plate's middle is, metres.
+// picture for as long as the video plays, 0.3 m under the eyes and close to
+// the body so they cover little of it (Ilia, Nov 18). ?controls=0.3,0.28:
+// how far below and ahead of the eyes the plate's middle is, metres.
 const CONTROLS_AT = (params.get('controls') || '').split(',').map(parseFloat);
 const videoControls = new VideoControls({
   scene, listener,
@@ -713,7 +715,9 @@ const videoControls = new VideoControls({
 });
 
 // The play button (play-button.js, Ilia, Nov 18: "look better"). It comes up
-// with Jane's last pose. playBall: where it floats, in the anchor's space.
+// with Jane's last pose, at its spot ahead of where the flight ends, and
+// stands still there (Ilia, Nov 18: "first location for play button is
+// perfect, keep it as is"). playBall: where it stands, in the anchor's space.
 const playButton = createPlayButton();
 const playBall = playButton.root;
 // base: where it floats (anchor space); null for its own spot past the end of
@@ -734,8 +738,6 @@ function startVideo() {
   const pose = new THREE.Object3D();
   pose.position.setFromMatrixPosition(head.matrixWorld);
   pose.quaternion.copy(anchor.quaternion);
-  // The quit button stays just past the right edge of the picture.
-  placeQuit(pose.position, new THREE.Vector3(0, 0, -1).applyQuaternion(pose.quaternion));
   gullVoice.setLevel(0, 0.2);
   setTimeout(() => {
     worldRoot.visible = spark.visible = false;
@@ -755,42 +757,66 @@ video.onEnded = () => {
   videoControls.hide();
   worldRoot.visible = spark.visible = true;
   if (!state.running) return; // the session ended under it: nobody to greet
+  playSong(betweenSong);
   showPlayBall(sceneApi.autoPlayBall);
   window.dispatchEvent(new Event('scene:video-end'));
 };
 
 // ---------- music ----------
-// "Seagulls Love Too" plays under everything until the video starts, a
-// little quieter while Jane talks. ?music=0 mutes it, ?music=0.3 sets the level.
-
-const music = new Audio('./jetski/audio/seagulls-love-too.mp3');
-music.loop = true;
-music.preload = 'auto';
-music.volume = 0;
-const musicState = { target: 0, level: 0 };
-// Call inside the Enter / Preview click so the browser lets it play with sound.
+// Two of Jane's songs play in the room, a little quieter while she talks:
+// "Seagulls Love Too" from the start until the video, and "On My Own",
+// quietly, after the video and after each race (Ilia, Nov 18: "keep silent
+// music On my own playing from Jane album in between sessions"), going on
+// from where it stopped. The race plays its own. ?music=0 mutes them,
+// ?music=0.3 sets the level; ?between=0.5: On My Own's level, as a part of it.
+const BETWEEN_LEVEL = Math.min(1, Math.max(0, num('between', 0.5)));
+function makeSong(file, level) {
+  const el = new Audio('./jetski/audio/' + file);
+  el.loop = true;
+  el.preload = 'auto';
+  el.volume = 0;
+  return { el, level, target: 0, now: 0 };
+}
+const songs = [makeSong('seagulls-love-too.mp3', 1), makeSong('on-my-own.mp3', BETWEEN_LEVEL)];
+const [introSong, betweenSong] = songs;
+const music = introSong.el;
+// Call inside the Enter / Preview click so the browser lets them play with sound.
 function unlockMusic() {
   if (!MUSIC_VOLUME) return;
-  const p = music.play();
-  if (p) p.then(() => { if (!musicState.target) music.pause(); }).catch(() => {});
+  for (const s of songs) {
+    const p = s.el.play();
+    if (p) p.then(() => { if (!s.target) s.el.pause(); }).catch(() => {});
+  }
 }
+function playSong(s, fromTop = false) {
+  if (!MUSIC_VOLUME || !s.level) return;
+  for (const o of songs) if (o !== s) o.target = 0;
+  if (fromTop) s.el.currentTime = 0;
+  s.target = MUSIC_VOLUME * s.level;
+  s.el.play().catch((err) => console.warn('Music did not start:', err.message || err));
+}
+// The start of the experience: Seagulls Love Too from the top, and On My Own
+// from its top the next time it comes.
 function startMusic() {
-  if (!MUSIC_VOLUME) return;
-  music.currentTime = 0;
-  musicState.target = MUSIC_VOLUME;
-  music.play().catch((err) => console.warn('Music did not start:', err.message || err));
+  stopMusic(true);
+  betweenSong.el.currentTime = 0;
+  playSong(introSong, true);
 }
 function stopMusic(now = false) {
-  musicState.target = 0;
-  if (now) { musicState.level = 0; music.volume = 0; music.pause(); }
+  for (const s of songs) {
+    s.target = 0;
+    if (now) { s.now = 0; s.el.volume = 0; s.el.pause(); }
+  }
 }
 function updateMusic(dt) {
   const talking = window.__jane?.st?.talking;
-  const want = musicState.target * (talking ? 0.45 : 1);
-  const rate = want < musicState.level ? 6 : 2; // quick fade out, slow fade in
-  musicState.level += (want - musicState.level) * Math.min(1, dt * rate);
-  music.volume = Math.min(1, Math.max(0, musicState.level));
-  if (!musicState.target && musicState.level < 0.005 && !music.paused) music.pause();
+  for (const s of songs) {
+    const want = s.target * (talking ? 0.45 : 1);
+    const rate = want < s.now ? 6 : 2; // quick fade out, slow fade in
+    s.now += (want - s.now) * Math.min(1, dt * rate);
+    s.el.volume = Math.min(1, Math.max(0, s.now));
+    if (!s.target && s.now < 0.005 && !s.el.paused) s.el.pause();
+  }
 }
 
 const fpsLabel = makeLabel(900, 150, 38);
@@ -1193,11 +1219,24 @@ function update(t, dt) {
   if (playBall.visible) updatePlayBall(T, t, dt);
 }
 
-// at: where it floats (world position), e.g. beside the toy jetski after a
-// race; without it, ahead of where the flight ended. Before the video it
-// waits for Jane's last pose (Ilia, Nov 18: "at the same time with last
-// pose"), unless `now` (she was asked to play it). Asked again while it is
-// already up in the same spot, it stays as it is.
+// The buttons' spot (Ilia, Nov 18: one place, they don't move): 0.62 m ahead
+// of where the flight ends, 0.2 m below the eyes, in the anchor's space (on a
+// flat screen 0.8 m and 0.12 m, so the plates under them are in the picture).
+// The play button stands there, and the toy jetski after the video; after a
+// race the two stand side by side (sceneApi.buttonSpot). buttonEyes: the
+// point they face.
+const BUTTON_GAP = 0.19; // after a race: each this far to one side of the spot
+const buttonSpot = (offset = 0) => {
+  const flat = !renderer.xr.isPresenting;
+  return new THREE.Vector3(offset, state.eye - (flat ? 0.12 : 0.2), -FLY_DIST - (flat ? 0.8 : 0.62));
+};
+const buttonEyes = () => new THREE.Vector3(0, state.eye, -FLY_DIST);
+
+// at: where it stands (world position), e.g. beside the toy jetski after a
+// race; without it, at the buttons' spot. Before the video it waits for
+// Jane's last pose (Ilia, Nov 18: "at the same time with last pose"), unless
+// `now` (she was asked to play it). Asked again while it is already up in the
+// same spot, it stays as it is.
 function showPlayBall(on = true, at = null, now = false) {
   const u = playBall.userData;
   if (!on) { playBall.visible = false; return; }
@@ -1210,8 +1249,11 @@ function showPlayBall(on = true, at = null, now = false) {
   u.pressedAt = -1;
   u.base = base;
   playButton.setText(at ? 'Watch again' : 'Play the video', 'Touch the button');
+  // Put it there and turn it to the player once; it stays like that.
+  playBall.position.copy(playBallBase());
+  playButton.face(anchor.localToWorld(buttonEyes()));
 }
-const playBallBase = () => playBall.userData.base || new THREE.Vector3(0, state.eye - 0.2, -FLY_DIST - 0.62);
+const playBallBase = () => playBall.userData.base || buttonSpot();
 
 // Jane's last pose is coming up: so does the play button.
 function onJaneLastPose() {
@@ -1220,20 +1262,17 @@ function onJaneLastPose() {
   if (state.inside && !video.playing && !raceBox.on && playBall.userData.pressedAt < 0) showPlayBall(true);
 }
 
-const ballWorld = new THREE.Vector3(), eyeWorld = new THREE.Vector3();
+const ballWorld = new THREE.Vector3();
 function updatePlayBall(T, t, dt) {
   const u = playBall.userData;
   const appear = clamp01((T - u.shownAt) / 0.9);
   const press = u.pressedAt > 0 ? clamp01((t - u.pressedAt) / 0.45) : 0;
-  playBall.position.copy(playBallBase());
-  playBall.position.y += 0.02 * Math.sin(t * 1.6);
   playBall.getWorldPosition(ballWorld);
   // Lights up as a fingertip (or a controller's ray) comes to it; a poke plays.
   let near = Infinity;
   for (const p of fingertips) near = Math.min(near, p.distanceTo(ballWorld));
   u.hover = THREE.MathUtils.damp(u.hover, near < 0.3 || u.rayOn ? 1 : 0, 10, dt);
-  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
-  playButton.update(t, { appear, press, hover: u.hover, viewer: eyeWorld.setFromMatrixPosition(cam.matrixWorld) });
+  playButton.update(t, { appear, press, hover: u.hover });
   if (u.pressedAt < 0 && appear > 0.9 && near < 0.13) startVideo();
 }
 
@@ -1296,6 +1335,7 @@ function leaveRace(result, quiet = false) {
   raceBox.on = false;
   raceBox.api.stop();
   if (quiet) return;
+  playSong(betweenSong);
   if (!renderer.xr.isPresenting) $('replay').hidden = false;
   window.dispatchEvent(new CustomEvent('scene:jetski-end', { detail: result || null }));
 }
@@ -1315,6 +1355,14 @@ const sceneApi = {
   // Jane's splat stands here (world position of her feet); the conversation
   // puts its caption above her instead of building the stand-in figure.
   janeSpot: splatJane ? () => splatJane.position() : null,
+  // The buttons' spot in world space (Ilia, Nov 18: the play button's first
+  // spot; the toy jetski appears there too, and after a race the two stand
+  // still side by side). offset: metres to the right of it (negative: left),
+  // e.g. -0.19 for the play button and 0.19 for the jetski after a race.
+  // position: where the button's middle goes; eyes: the point it faces.
+  buttonSpot(offset = 0) {
+    return { position: anchor.localToWorld(buttonSpot(offset)), eyes: anchor.localToWorld(buttonEyes()), gap: BUTTON_GAP };
+  },
   // Where the player stands after the flight, in world space: feet position
   // and horizontal forward direction (toward the coffee table).
   arrivalPose() {
@@ -1511,7 +1559,7 @@ renderer.domElement.addEventListener('click', (e) => {
   if (playBall.visible && rc.intersectObjects(playButton.hits, false).length) startVideo();
 });
 window.__startVideo = startVideo;
-window.__debug = { state, playBall, playButton, video, worldRoot, gull, bill, splatJane, music, spark, videoControls, gullVoice, raceBox, enterRace, leaveRace, hands, quitButton, times: { T_PORTAL, T_GLIDE, T_ARRIVE } };
+window.__debug = { state, playBall, playButton, video, worldRoot, gull, bill, splatJane, music, songs, spark, videoControls, gullVoice, raceBox, enterRace, leaveRace, hands, quitButton, times: { T_PORTAL, T_GLIDE, T_ARRIVE } };
 
 // Test hook: freeze the sequence at a given time (seconds).
 window.__setSequenceTime = (T) => { state.fixedT = T; };
