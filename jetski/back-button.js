@@ -1,13 +1,14 @@
-// The way out of the ride: the 180 video's Back button, in the same place
-// and the same look. A gold button, 8.4 cm across, with a white arrow on a
-// deep teal face, stands on a small dark glass plate low in front of the
-// rider, where the video's controls are: here that is on the handlebar,
-// between the hands.
+// The way out of the ride: the 180 video's Back button, the same look. A
+// gold button, 8.4 cm across, with a white arrow on a deep teal face, stands
+// on a small dark glass plate. In the headset it stands on the right, beside
+// the opening's Quit, well away from the hands on the grips (Ilia, Nov 18:
+// "move on the right to avoid pressing on it while playing"); on a screen it
+// sits on the handlebar, where a click reaches it (place() and the race).
 //
-// A hand on a grip never comes near it, and to be sure a passing hand can't
-// end a race, it takes a hold: a fingertip (or a controller) on the button,
-// or the B button, for a second and a half. A gold ring fills around it
-// meanwhile and the word turns gold. On a screen a click is enough.
+// To be sure a passing hand can't end a race, it takes a hold: a fingertip
+// (or a controller) on the button, or the B button, for a second and a half.
+// A yellow ring fills around it over a white one (as on Quit) and the word
+// turns gold. On a screen a click is enough.
 import * as THREE from 'three';
 
 const R = 0.042;            // button radius, as on the video's controls
@@ -98,18 +99,22 @@ export function createBackButton({ label = 'Back' } = {}) {
   faceMesh.position.z = DEPTH / 2 + 0.0006;
   faceMesh.renderOrder = 8;
   // Glow when a hand is at it, and the ring that fills while it is held
-  // (clockwise from the top).
+  // (clockwise from the top): yellow over a white track that is always there,
+  // for contrast (Ilia, Nov 18; the same as the opening's Quit).
   const glow = { transparent: true, depthWrite: false, fog: false, toneMapped: false, blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor };
   const halo = new THREE.Mesh(new THREE.RingGeometry(R + 0.003, R + 0.016, 64), new THREE.MeshBasicMaterial({ color: 0xffc860, ...glow }));
   halo.position.z = -DEPTH / 2 + 0.001;
   halo.renderOrder = 9; halo.visible = false;
+  const track = new THREE.Mesh(new THREE.RingGeometry(R + 0.004, R + 0.014, SEG), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false, fog: false, toneMapped: false }));
+  track.position.z = DEPTH / 2 + 0.001;
+  track.renderOrder = 10;
   const ringGeo = new THREE.RingGeometry(R + 0.005, R + 0.013, SEG, 1, Math.PI / 2, Math.PI * 2);
-  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide }));
+  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffc61a, transparent: true, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide }));
   ring.scale.x = -1; // so it fills clockwise (both sides drawn, as this turns it over)
-  ring.position.z = DEPTH / 2 + 0.001;
-  ring.renderOrder = 10;
+  ring.position.z = DEPTH / 2 + 0.0015;
+  ring.renderOrder = 11;
   ringGeo.setDrawRange(0, 0);
-  button.add(body, faceMesh, halo, ring);
+  button.add(body, faceMesh, halo, track, ring);
   root.add(button);
 
   const inv = new THREE.Matrix4(), _p = new THREE.Vector3();
@@ -165,5 +170,27 @@ export function createBackButton({ label = 'Back' } = {}) {
     return root.visible && raycaster.intersectObjects(meshes, false).length > 0;
   }
 
-  return { root, show, update, hit, get visible() { return root.visible; }, get progress() { return held; } };
+  // Stand it `angle` degrees to the right of `forward` (horizontal) from the
+  // head, `distance` metres out and `below` metres under the eyes, facing
+  // them, as the opening's Quit does. Both in world space; it keeps that
+  // place in its parent from then on.
+  const UP = new THREE.Vector3(0, 1, 0), _d = new THREE.Vector3(), _at = new THREE.Vector3();
+  const _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ');
+  function place(head, forward, { angle = 65, distance = 0.55, below = 0.25 } = {}) {
+    const dir = _d.set(forward.x, 0, forward.z).normalize().applyAxisAngle(UP, -THREE.MathUtils.degToRad(angle));
+    const at = _at.copy(head).addScaledVector(dir, distance);
+    at.y = head.y - below;
+    _e.set(-Math.atan2(below, distance), Math.atan2(-dir.x, -dir.z), 0);
+    _q.setFromEuler(_e);
+    const parent = root.parent;
+    if (parent) {
+      parent.updateWorldMatrix(true, false);
+      parent.worldToLocal(at);
+      _q.premultiply(parent.getWorldQuaternion(_pq).invert());
+    }
+    root.position.copy(at);
+    root.quaternion.copy(_q);
+  }
+
+  return { root, show, update, hit, place, get visible() { return root.visible; }, get progress() { return held; } };
 }

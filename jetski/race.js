@@ -7,8 +7,8 @@
 // canal and a jump back into the lagoon, with inflatable ramps on the way.
 // Seagulls fly ahead and drop a trail of $100 bills along the racing line.
 // Ride through them: each bill in a row is worth $250 more, up to $2,500,
-// and the song's $100,000 comes with ease on a decent lap. Jane (her first
-// scan) races you standing on her own jetski.
+// and the song's $100,000 comes with ease on a decent lap. Jane (her jetski
+// scan) races you on her own jetski.
 //
 //   const race = createRace({ renderer, embedded, onExit, options });
 //   await race.ready;       // assets loaded, world built, shaders compiled
@@ -47,6 +47,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     bill: 0.9,             // width of a bill, metres
     throttle: 'right',     // which hand is the throttle: 'right' or 'any'
     quit: 95,              // Quit this many degrees right of the heading (null: none)
+    back: 65,              // in the headset, Back this many degrees right of the heading, beside Quit (null: on the bar)
     exposure: 1.0,
     ...options,
   };
@@ -84,7 +85,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
   const jane = { craft: new Craft(), ski: null, wake: null, rider: null };
   const layout = { grips: [new THREE.Vector3(), new THREE.Vector3()], pivot: new THREE.Vector3(), fit: new THREE.Vector3() };
   let eyeY = 1.5;
-  let built = false, active = false;
+  let built = false, active = false, backAside = false;
 
   const race = {
     state: 'off', clock: 0, countdown: 0, lastBeep: 9, dist: -START_BACK, idx: 0, lat: 0, off: 0, finish: null, rank: 2,
@@ -110,7 +111,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     scene.environment = sky.env;
 
     player.ski = makeJetski(YELLOW, sky.env, { riser: O.riser, below: O.below, ahead: O.ahead, accent: JET_BLACK });
-    jane.ski = makeJetski(JET_BLACK, sky.env, { riser: 0.36, accent: YELLOW });
+    jane.ski = makeJetski(JET_BLACK, sky.env, { riser: 0, accent: YELLOW }); // the stock bar: her scan's hands are at its height
     player.gloves = makeGloves(player.ski);
     scene.add(player.ski.root, jane.ski.root);
     eyeY = player.ski.eye.y;
@@ -119,12 +120,12 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     layout.grips[0].set(-gx, bar.y, bar.z);
     layout.grips[1].set(gx, bar.y, bar.z);
 
-    // Jane: her scan standing on her jetski, or simple shapes if it can't load.
+    // Jane: her jetski scan riding hers, or simple shapes if it can't load.
     const sparkLib = await sparkP;
     if (sparkLib) {
       try {
         spark = new sparkLib.SparkRenderer({ renderer, maxStdDev: 2.4 });
-        spark.blurAmount = 0.3;
+        spark.blurAmount = 0.1; // Jane's scan is Postshot's anti-aliased kind (as in the room)
         scene.add(spark);
         jane.rider = makeJaneRider(jane.ski, sparkLib.SplatMesh);
         jane.rider.ready.catch(() => { jane.rider.stand.removeFromParent(); makeSimpleRider(jane.ski); });
@@ -575,9 +576,21 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
       // Sitting still with no throttle (holding on with the left hand only, say).
       race.noGas = xr && input.throttle < 0.05 && pc.speed < 5 ? race.noGas + dt : 0;
     }
-    // Back, on the bar, from the start line to the finish (the results have
-    // their own): held for a second and a half, it leaves the ride.
+    // Back, from the start line to the finish (the results have their own):
+    // held for a second and a half, it leaves the ride. In the headset it
+    // stands on the right beside Quit, away from the hands on the grips
+    // (Ilia, Nov 18: "move on the right to avoid pressing on it while
+    // playing"); on a screen it is on the bar, where a click finds it.
     const onBike = race.state === 'ready' || race.state === 'countdown' || race.state === 'race';
+    const aside = xr && O.back !== null;
+    if (aside !== backAside) {
+      backAside = aside;
+      if (aside) {
+        holder.add(hud.back.root);
+        holder.updateMatrixWorld(true);
+        hud.back.place(holder.localToWorld(_a.set(0, eyeY, 0)), _b.set(0, 0, -1).transformDirection(holder.matrixWorld), { angle: O.back });
+      } else hud.backOnBar(player.ski);
+    }
     hud.back.show(onBike);
     if (onBike && !exiting && !pendingReset && hud.back.update(input.pointers, input.back, dt, now)) choose('exit');
     // Quit, the whole experience, at any point of the ride (in the headset).
@@ -805,7 +818,7 @@ export function createRace({ renderer, embedded = false, onExit = null, options 
     get active() { return active; },
     get state() { return race.state; },
     summary,
-    debug: { race, ai, player, jane, layout, options: O, get world() { return world; }, get gulls() { return gulls; }, get controls() { return controls; }, get hud() { return hud; }, get sfx() { return sfx; }, get engines() { return [engineP, engineJ]; }, get ocean() { return ocean; }, get sky() { return sky; }, rig, holder, respawn, handMeshes, quit },
+    debug: { race, ai, player, jane, layout, options: O, get world() { return world; }, get gulls() { return gulls; }, get controls() { return controls; }, get hud() { return hud; }, get sfx() { return sfx; }, get engines() { return [engineP, engineJ]; }, get ocean() { return ocean; }, get sky() { return sky; }, get spark() { return spark; }, rig, holder, respawn, handMeshes, quit },
   };
   return api;
 }

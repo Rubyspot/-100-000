@@ -8,7 +8,7 @@ The game is a module (`race.js`). It runs in two places:
 
 - **In the opening** (`../main.js`): after the 180 video Jane offers the ride and a toy jetski stands where the
   video's play button first stood (`sceneApi.buttonSpot`). Touching it starts the race in the same session; Back
-  on the handlebar (or BACK on the results board) comes back to her room, where the toy jetski is waiting at
+  (on your right, beside Quit) or BACK on the results board comes back to her room, where the toy jetski is waiting at
   once, with the play button beside it (the two side by side on that spot, 38 cm apart, standing still), while
   she reacts to the result.
 - **On its own page**: `https://rubyspot.github.io/-100-000/jetski/`, **Enter VR** in Quest Browser, or the
@@ -70,10 +70,13 @@ physics.
 - Fallbacks: controllers (right trigger = go; hold a trigger or a grip button and tilt that controller, or
   use the thumbstick, to steer; A/B on the results) and the keyboard in the flat preview (W/↑ go, A/D or ←/→ steer, Space start, R again,
   Esc exit).
-- **Back**: the 180 video's Back button, in the same place under the view and the same look, stands on
-  the handlebar between the hands from the start line to the finish. Hold a fingertip or a controller on
-  it for a second and a half (a gold ring fills and the word turns gold), or hold B or Esc, to leave the
-  ride; a click does it in the flat preview. In the opening it goes back to Jane's room, on its own page it ends the session.
+- **Back**: the 180 video's Back button, the same look, from the start line to the finish. In the headset
+  it stands on your right beside Quit, 65° round from the jetski's heading, 55 cm out and 25 cm below the
+  eyes, well away from the hands on the grips (Ilia, Nov 18: "move on the right to avoid pressing on it
+  while playing"); in the flat preview it sits on the handlebar. Hold a fingertip or a controller on it for
+  a second and a half (a yellow ring fills over a white one, as on Quit, and the word turns gold), or hold
+  B or Esc, to leave the ride; a click does it in the flat preview. In the opening it goes back to Jane's
+  room, on its own page it ends the session.
 - **Quit**: the opening's Quit button (`../quit-button.js`, gold with a power sign) rides along at your
   right, 95° round from the jetski's heading, 55 cm out and 25 cm below the eyes, the whole time you are
   in the race. Held for a second and a half it ends the whole experience (the headset session).
@@ -97,16 +100,18 @@ physics.
 - **Golden bills** hang in the air past each of the four ramps: $10,000 and a boost. Long jumps boost too.
 - **$100,000** is meant to come with ease, as in the song: a first lap that takes a bit over half of the
   bills gets there, and a clean lap triples it. Jane cheers at $100,000 and again at $200,000.
-- **Jane** (her first 3D scan, standing on a black jetski) rides the line with a rubber band: she waits
-  when she is ahead and pushes when she is behind. Her lines show in a speech bubble.
+- **Jane** (her jetski scan from Nov 18, on a black jetski: feet in the footwells, knees bent, hands on the
+  grips) rides the line with a rubber band: she waits when she is ahead and pushes when she is behind. Her
+  lines show in a speech bubble. The scan is Ilia's Jetski.sog cut to 75k splats without spherical
+  harmonics (`assets/jane/jetski-75k.sog`), sized in the units the room uses for her (1.75 m tall).
 
 ## Interface
 
 Hot pink, sunny yellow, cream and plum, set in Fredoka (`assets/fonts`, SIL Open Font License): a dash on
 the handlebar (cash and the bar to $100,000, combo pips, place, speed, time, you and Jane on the lap), big
 messages ahead, "+$700" pops, confetti, and a results board with two palm-size buttons at arm's reach
-(AGAIN, and BACK or EXIT). The Back button on the bar (`back-button.js`) takes the video controls' look
-instead: a gold button with a white arrow on dark glass. A soft vignette in fast turns (`?vignette=0`).
+(AGAIN, and BACK or EXIT). The Back button (`back-button.js`) takes the video controls' look instead: a
+gold button with a white arrow on dark glass. A soft vignette in fast turns (`?vignette=0`).
 
 ## Sound
 
@@ -132,7 +137,7 @@ enclosed. Jane's engine and the gulls are positioned in space. The Crispy J play
 - `world.js`: course, islands, canals, props, collisions, and the baked maps (distance to land, depth,
   light on the water, sun and sky on every rock vertex).
 - `ocean.js`, `sky.js`: water and sky. `craft.js`: jetski physics. `controls.js`: hands, controllers,
-  keyboard. `hud.js`: the interface; `back-button.js`: Back on the bar. `gulls.js`: flock (banking into
+  keyboard. `hud.js`: the interface; `back-button.js`: Back. `gulls.js`: flock (banking into
   turns, gliding with bursts of flapping), bills, combo. `effects.js`: wake, spray (sheets off the bow, the
   rooster tail, curtains in hard turns, landing bursts; drops and mist), speed streaks, confetti.
   `sfx.js`: sound; `engine-worklet.js`: the engine. `models.js`: jetski, gloves, Jane. The hands and
@@ -147,7 +152,8 @@ enclosed. Jane's engine and the gulls are positioned in space. The Crispy J play
 `window.simulate(seconds)`), `?bar=0.36,0.42`, `?riser=0.12`, `?steer=1.3` (steering gain),
 `?throttle=any` (either hand is the throttle), `?bill=0.9` (width of a bill, metres), `?fb=0.9` (headset resolution scale),
 `?music=0`, `?vignette=0`, `?streaks=0`, `?heave=0` (the view keeps its height), `?jane=simple` (no scan),
-`?quit=95` (Quit's angle to the right of the heading; `=off` leaves it out).
+`?quit=95` (Quit's angle to the right of the heading; `=off` leaves it out), `?back=65` (Back's angle to the
+right in the headset; `=bar` puts it on the handlebar).
 
 In the opening: `?bar=`, `?riser=`, `?steer=`, `?throttle=any`, `?vignette=0`, `?streaks=0`, `?heave=0`,
 `?music=0`, `?debug` and `?autopilot` work the same way, `?aa=1` turns multisampling on for the session, and `?race=0` leaves the

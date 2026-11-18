@@ -7,7 +7,8 @@
 //   - Jane's lines in a speech bubble
 //   - "+$700" pops when a bill is picked up
 //   - a results board with two palm-size buttons at arm's reach
-//   - the Back button on the handlebar all through the ride (back-button.js)
+//   - the Back button all through the ride (back-button.js): on the right in
+//     the headset, on the handlebar on a screen
 //   - a soft vignette in fast turns and the fade used between scenes
 import * as THREE from 'three';
 import { createBackButton } from './back-button.js';
@@ -315,11 +316,16 @@ export function createHud({ holder, camera, font, eyeY, embedded = false, goal =
       dashMesh.rotation.x = -0.5;
       ski.body.add(dashMesh);
       ski.grips.forEach((g, i) => g.add(hints[i]));
-      // Back sits just above the middle of the bar, under the dash, turned up
-      // to the eyes.
-      const at = back.root.position.copy(ski.bar.position).add(new THREE.Vector3(0, 0.075, 0.013));
-      back.root.rotation.x = -Math.atan2(ski.eye.y - at.y, -at.z);
+      this.backOnBar(ski);
+    },
+    // Back just above the middle of the bar, under the dash, turned up to the
+    // eyes: its place on a screen. (In the headset the race stands it on the
+    // right, with back.place.)
+    backOnBar(ski) {
       ski.body.add(back.root);
+      const at = back.root.position.copy(ski.bar.position).add(new THREE.Vector3(0, 0.075, 0.013));
+      back.root.quaternion.identity();
+      back.root.rotation.x = -Math.atan2(ski.eye.y - at.y, -at.z);
     },
     dash(info, now) { if (now - lastDash < 0.1) return; lastDash = now; drawDash(info); },
     panel: showPanel, say, pop, results: showResults, pressButtons, clickButtons, clickBack,

@@ -52,6 +52,7 @@ const race = createRace({
     ...(params.has('bill') ? { bill: num('bill', 0.9) } : {}),
     ...(params.get('throttle') === 'any' ? { throttle: 'any' } : {}),
     ...(params.has('quit') ? { quit: params.get('quit') === 'off' ? null : num('quit', 95) } : {}),
+    ...(params.has('back') ? { back: params.get('back') === 'bar' ? null : num('back', 65) } : {}),
   },
 });
 
