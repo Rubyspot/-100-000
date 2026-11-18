@@ -20,7 +20,8 @@ video again or ride again.
 
 The buttons stand still (Ilia, Nov 18: "keep it at the same spot"): the play
 button and the toy jetski have one spot, 0.62 m beyond where the flight ends
-and 0.2 m below the eyes, turned once to face the player; after a race they
+and 0.2 m below the eyes (0.8 m and 0.12 m on a flat screen, to be in the
+picture), turned once to face the player; after a race they
 stand 0.19 m either side of it, the play button on the left.
 
 All through the session a **Quit** button stands at the player's right

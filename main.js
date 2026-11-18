@@ -1219,12 +1219,17 @@ function update(t, dt) {
   if (playBall.visible) updatePlayBall(T, t, dt);
 }
 
-// The buttons' spot (Ilia, Nov 18: one place, they don't move): ahead of where
-// the flight ends, a little below the eyes, in the anchor's space. The play
-// button stands there, and the toy jetski after the video; after a race the
-// two stand side by side (sceneApi.buttonSpot). EYES: the point they face.
+// The buttons' spot (Ilia, Nov 18: one place, they don't move): 0.62 m ahead
+// of where the flight ends, 0.2 m below the eyes, in the anchor's space (on a
+// flat screen 0.8 m and 0.12 m, so the plates under them are in the picture).
+// The play button stands there, and the toy jetski after the video; after a
+// race the two stand side by side (sceneApi.buttonSpot). buttonEyes: the
+// point they face.
 const BUTTON_GAP = 0.19; // after a race: each this far to one side of the spot
-const buttonSpot = (offset = 0) => new THREE.Vector3(offset, state.eye - 0.2, -FLY_DIST - 0.62);
+const buttonSpot = (offset = 0) => {
+  const flat = !renderer.xr.isPresenting;
+  return new THREE.Vector3(offset, state.eye - (flat ? 0.12 : 0.2), -FLY_DIST - (flat ? 0.8 : 0.62));
+};
 const buttonEyes = () => new THREE.Vector3(0, state.eye, -FLY_DIST);
 
 // at: where it stands (world position), e.g. beside the toy jetski after a
