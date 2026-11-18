@@ -13,7 +13,7 @@
 // stands beside the jetski.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
 import { Video180 } from './video.js';
 import { VideoControls } from './video-controls.js';
 import { GullVoice } from './audio.js';
@@ -351,6 +351,26 @@ const room = new SplatMesh({
 room.rotation.x = Math.PI;
 room.position.y = FLOOR;
 scanGroup.add(room);
+// Ilia, Nov 18: "splat transparent on the floor and some walls". The 400k cut
+// of the scan leaves thin, half-clear splats there, and the 360 render behind
+// the room showed through them. Every room splat is made more solid: its
+// opacity times ?solid=2 (above 1 Spark draws a splat as a fuller disc).
+// ?solid=1 turns it off.
+const SOLID = Math.max(0.1, num('solid', 2));
+if (SOLID !== 1) {
+  const solidFx = new dyno.Dyno({
+    inTypes: { gsplat: dyno.Gsplat },
+    outTypes: { gsplat: dyno.Gsplat },
+    statements: ({ inputs, outputs }) => dyno.unindentLines(/* glsl */`
+      ${outputs.gsplat} = ${inputs.gsplat};
+      ${outputs.gsplat}.rgba.a = ${inputs.gsplat}.rgba.a * ${SOLID.toFixed(3)};
+    `),
+  });
+  room.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => ({
+    gsplat: solidFx.apply({ gsplat }).gsplat,
+  }));
+  room.updateGenerator();
+}
 
 // Jane's splats stand in the room at JANE_SPOT, turned toward the point where
 // the flight ends (jane/splat-jane.js has the particle transformation).
@@ -1616,7 +1636,7 @@ renderer.domElement.addEventListener('click', (e) => {
   if (playBall.visible && rc.intersectObjects(playButton.hits, false).length) startVideo();
 });
 window.__startVideo = startVideo;
-window.__debug = { state, playBall, playButton, video, worldRoot, gull, bill, splatJane, music, songs, spark, videoControls, gullVoice, raceBox, enterRace, leaveRace, hands, quitButton, times: { T_PORTAL, T_GLIDE, T_ARRIVE } };
+window.__debug = { state, room, playBall, playButton, video, worldRoot, gull, bill, splatJane, music, songs, spark, videoControls, gullVoice, raceBox, enterRace, leaveRace, hands, quitButton, times: { T_PORTAL, T_GLIDE, T_ARRIVE } };
 
 // Test hook: freeze the sequence at a given time (seconds).
 window.__setSequenceTime = (T) => { state.fixedT = T; };

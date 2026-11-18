@@ -79,7 +79,7 @@ hands show.
 
 URL options: `?debug` (fps and video source label in headset), `?lod=0`
 (disable Spark LoD), `?world=stage` (Ilia's bamboo huts and deck instead of the room), `?scan=<url>`
-(load another .sog/.spz/.ply), `?floor=0.07` (lift the world, metres; 0 on the stage),
+(load another .sog/.spz/.ply), `?floor=0.07` (lift the world, metres; 0 on the stage), `?solid=2` (room splats' opacity times this, so the floor and walls are not see-through; 1 = as scanned),
 `?spot=-0.68,-1.93` (where Jane stands, the scan's own x,z; 0,0 on the stage), `?to=desk` (fly toward
 the room's desk instead of its coffee table), `?arrive=x,z` (where the flight ends, the scan's own
 x,z), `?height=1.75` (Jane's height), `?sparks=0.35`
