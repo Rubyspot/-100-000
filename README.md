@@ -4,16 +4,28 @@ WebXR opening of the "$100,000" experience: mixed reality, "Seagulls Love Too"
 starts, a portal opens in the room's entrance and a seagull glides out of it and
 lands on the bottom of its rim. A $100 bill flutters down from the ceiling to it, the
 gull jumps up, catches it, climbs, turns and dives back in (its calls fade as it
-goes), then the player flies through the portal into the room scan, which stands on
-a tropical beach (a 360 photo all round it). Jane is in the room from the first
-moment, in her yoga pose. On arrival she goes through her other poses, 3 s each,
-changing through a swirl of particles: surfboard, singing into a microphone, then
-the heart pose, where she stays. The gold ball starts the 180° video, and the song
-fades out when it starts. After the video she comes back in the jetski pose and
-offers the jetski race: a toy jetski floats in front of the player, and touching it
-starts the race ([jetski/](jetski/README.md)) in the same session. Leaving the race
-comes back to the room, where she reacts to the result, and the video's gold ball
-floats beside the jetski to watch it again.
+goes), then the player flies slowly through the portal into the room scan (2.4 m
+at 0.3 m/s, from just inside the doorway), which stands on a tropical beach (a
+360 photo all round it). Jane is in the room from the first moment, in her yoga
+pose. On arrival she goes through her other poses, 3 s each, changing through a
+swirl of particles: surfboard, singing into a microphone, then the heart pose,
+where she stays. The video's play button comes up as she changes into that last
+pose; it starts the 180° video, and the song fades out when it starts. After the
+video she comes back in the jetski pose and offers the jetski race: a toy jetski
+floats in front of the player, and touching it starts the race
+([jetski/](jetski/README.md)) in the same session. Leaving the race comes back to
+the room, where she reacts to the result, and the play button floats beside the
+jetski to watch the video again.
+
+All through the session a **Quit** button stands at the player's right
+(`quit-button.js`), 95° round from the way the room faces, just past the right
+edge of the 180 picture, 0.55 m out and 0.25 m below the eyes: a fingertip or a
+controller on it, or the trigger while pointing at it, held for 1.5 s while a
+gold ring fills, ends the session (`?quit=95` sets the angle, `?quit=off` leaves
+it out). Inside the room and during the video the player's hands are drawn as
+real hands (`hands.js`: the WebXR Input Profiles generic hand meshes in
+`vendor/hands/`, MIT, posed from the tracked joints); in mixed reality the real
+hands show.
 
 - three.js + [Spark 2](https://sparkjs.dev) for splats, vendored in `vendor/` (no build step).
 - `assets/room-400k.sog`: "Room splat" scan decimated from 4.4M to 400k splats, no SH, lifted 7 cm
@@ -45,8 +57,9 @@ URL options: `?debug` (fps and video source label in headset), `?to=desk` (fly t
 (share of her splats that fly as sparks when she transforms, 1 = all), `?poses=yoga,surf,sing,heart` (her
 poses before the video, in order), `?after=jetski` (her pose after it), `?hold=3` (seconds on each pose),
 `?morph=2` (seconds each change takes), `?outside=<url>` (another 360 image outside the room; `off` keeps
-a plain sky), `?outsideturn=90` (turns it, degrees), `?controls=0.3,0.43` (the video controls this far
-below the eyes and out from them, metres), `?music=0.55`
+a plain sky), `?outsideturn=90` (turns it, degrees), `?controls=0.52,0.36` (the video controls this far
+below the eyes and out from them, metres), `?fly=2.4` and `?speed=0.3` (the flight through the portal:
+metres and m/s), `?quit=95` (the quit button's angle to the right; `off` hides it), `?music=0.55`
 (song volume, 0 mutes), `?jane=off` (no Jane), `?autostart` (flat preview), `?race=0` (leave the jetski
 race out; the floating jetski then opens `/jetski/`), `?aa=1` (multisampling for the whole session: off
 by default because it costs frame rate with splats, but the race's edges are smoother with it),
@@ -57,8 +70,11 @@ Run locally: `python3 -m http.server` in this folder, open http://localhost:8000
 
 ## 180° video
 
-After the flight a gold ball floats in front of the player: touch it (or pinch
-while pointing at it) to play the 180° side-by-side video. On Quest it plays on
+When Jane changes into her last pose, the play button comes up in front of the
+player (`play-button.js`: a 20 cm gold button with a white arrow on a teal face,
+a glow that breathes and a ring that ripples out, over a plate saying "Play the
+video"; it lights up as a hand comes near). Touch it (or point a controller at
+it and pull the trigger) to play the 180° side-by-side video. On Quest it plays on
 a WebXR equirect media layer (sharp, nearly free on the GPU); elsewhere it falls
 back to a textured half sphere. Around the picture is a dark surround that
 follows the head and reaches 6° into the picture's rim with a soft border, so the
@@ -70,8 +86,9 @@ rate and `?hz=0` leaves it alone.
 While it plays, three palm-sized buttons (8.4 cm) sit at the lower edge of the
 picture, within reach (`video-controls.js`): back 10 s, pause / play and close,
 with the playing time and the source's tag (8K+, 8K or 4K) above them. They stay
-on the whole time (Ilia, Nov 17), placed when the video starts 0.3 m under the
-eyes and 0.43 m out toward the middle of the picture (`?controls=0.3,0.43`).
+on the whole time (Ilia, Nov 17), placed when the video starts low, out of the
+view (Ilia, Nov 18): 0.52 m under the eyes and 0.36 m out toward the middle of
+the picture, about 55° down (`?controls=0.52,0.36`).
 Press one with a fingertip, or point a controller (or a pinching hand) at it and
 pull the trigger (pinch); on a flat screen, click. Close goes back to the room
 and Jane.
@@ -122,18 +139,20 @@ Straight from Google Drive (file shared as "Anyone with the link"):
 `tools/drive-to-video.sh <drive share url> video 30M` downloads, encodes the
 fallback and cleans up. Needs drive.usercontent.google.com allowed on the network.
 
-Other options: `?speed=0.4` sets the flight speed in m/s (constant).
+Other options: `?speed=0.3` sets the flight speed in m/s (constant), `?fly=2.4` its length in metres.
 
 ## Scene hooks
 
 `window.sceneApi` exposes the scene to other modules (the Jane avatar):
 `scene`, `renderer`, `camera`, `rig` (camera parent; the flight moves it),
 `anchor`, `listener`, `showPlayBall(on, at)` (`at`: a world position, or its
-usual spot), `playVideo()`, `arrivalPose()`,
+usual spot; without `at`, before the video it waits for Jane's last pose),
+`playVideo()`, `arrivalPose()`,
 `startJetski()` (starts the race in this session; false if it isn't loaded) and
 `autoPlayBall` (set false to control when the play ball shows). Window events:
 `scene:arrived`, `scene:video-start`, `scene:video-end`, `scene:jetski-end` (back
-from the race; `detail` is its result: money, time, won, bills, total, finished).
+from the race; `detail` is its result: money, time, won, bills, total, finished),
+`scene:session-end` (the session ended: Quit, or the headset's own way out).
 
 ## Jane's poses
 

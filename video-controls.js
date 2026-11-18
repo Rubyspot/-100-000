@@ -1,8 +1,9 @@
 // Palm-sized controls for the 180° video: back 10 s, pause / play, close.
 // Three round buttons, 8.4 cm across, stand on a dark glass plate within arm's
-// reach, at the lower edge of the picture: under its middle, about 35 degrees
-// below eye level, so they show at the bottom of the view while the viewer
-// looks ahead. They stay there for the whole video (Ilia, Nov 17). Press one
+// reach, under the middle of the picture, about 55 degrees below eye level:
+// just out of view while the viewer looks ahead, a glance down away (Ilia,
+// Nov 18: "much lower so it's not covering the view"). They stay there for
+// the whole video (Ilia, Nov 17). Press one
 // with a fingertip (hand tracking), or point a controller or a pinching hand
 // at it and pull the trigger / pinch. The plate also shows how far the video
 // has played.
@@ -107,7 +108,7 @@ export class VideoControls {
   // onBack / onToggle / onClose are called when a button is pressed.
   // below / ahead: where the plate's middle sits in the headset, metres under
   // the eyes and in front of them.
-  constructor({ scene, listener, onBack, onToggle, onClose, below = 0.3, ahead = 0.43 }) {
+  constructor({ scene, listener, onBack, onToggle, onClose, below = 0.52, ahead = 0.36 }) {
     this.actions = [onBack, onToggle, onClose];
     this.spot = { below, ahead };
     // root: on while a video plays. body: the plate and buttons.
