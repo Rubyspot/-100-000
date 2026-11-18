@@ -2,15 +2,15 @@
 // Mixed reality: "Seagulls Love Too" starts, a portal opens in the room's
 // entrance, a seagull comes out and settles on the bottom of its rim. A $100
 // bill flutters down from the ceiling to it, the gull jumps up, catches it,
-// turns round and flies back in, and the player flies through the portal,
-// over a flower garden, to a deck in front of two bamboo huts. Jane is there
-// already, on the deck, and goes through her poses, 3 s each (sing, surf,
-// heart). The play ball starts the 180 video, with palm-sized controls (back
-// 10 s, pause, close) beside the picture while it plays. After the video
-// Jane offers the jetski race: a toy jetski stands in front of the player,
-// and touching it starts the race (jetski/race.js) right here, in the same
-// session. Back from the race, the video's play button stands beside the
-// jetski.
+// turns round and flies back in, and the player flies through the portal into
+// the room scan (?world=stage: over a flower garden to the deck in front of
+// two bamboo huts). Jane is there already, and goes through her poses, 3 s
+// each (sing, surf, heart). The play ball starts the 180 video, with
+// palm-sized controls (back 10 s, pause, close) beside the picture while it
+// plays. After the video Jane offers the jetski race: a toy jetski stands in
+// front of the player, and touching it starts the race (jetski/race.js) right
+// here, in the same session. Back from the race, the video's play button
+// stands beside the jetski.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
@@ -37,10 +37,13 @@ const FLY_SPEED = num('speed', 0.3); // m/s, constant
 // server. Next to it, in full/light/, is the same 8K picture at 60 Mbit/s
 // (tools/encode-8k-light.sh) for connections that can't keep up with the
 // master. The headset loads the best of the two it can ahead of time and plays
-// the one that will run without stalling (video.js); the 4K H.264 copy in
-// ./video/ takes over where HEVC can't be decoded or the connection is too slow
-// for both, and is all a flat screen or a phone needs. (The branch's root and
-// its light/ still hold the 66 s demo cut, which nothing plays any more.)
+// the one that will run without stalling (video.js). Ilia, Nov 18: "video
+// always 8k": on a connection too slow for both, the lighter one plays anyway
+// and waits for what it needs, rather than giving way to the 4K H.264 copy in
+// ./video/. That one is the headset's last resort, only for one that can't
+// decode the 8K at all (or whose decoder gives up on both), and is all a flat
+// screen or a phone needs. (The branch's root and its light/ still hold the
+// 66 s demo cut, which nothing plays any more.)
 // ?video=original, light, 8k (both 8K ones) or 4k picks; ?video=<folder>/,<folder>/ lists others.
 const ORIGINAL_SRC = 'https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/full/';
 const LIGHT_SRC = `${ORIGINAL_SRC}light/`;
@@ -50,16 +53,18 @@ const VIDEO_SRC = (() => {
   const named = { original: [ORIGINAL_SRC], light: [LIGHT_SRC], '8k': [ORIGINAL_SRC, LIGHT_SRC], '4k': [COPY_SRC] };
   const asked = (params.get('video') || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (asked.length) return asked.flatMap((s) => named[s.toLowerCase()] || [s]);
-  return IS_HEADSET ? [ORIGINAL_SRC, LIGHT_SRC, COPY_SRC] : [COPY_SRC];
+  return IS_HEADSET ? [ORIGINAL_SRC, LIGHT_SRC] : [COPY_SRC];
 })();
-// The world past the portal (Ilia, Nov 18, "Home outside"): two bamboo huts
-// with an opening between them, a deck in front of it, a flower garden and
-// palms all round. 400k of its 3.7M splats, no SH, shifted so the deck is at
-// the real floor (assets/stage-400k.sog). ?scan=<url> and ?floor=<metres>
-// override (the old room scan, assets/room-400k.sog, wants ?floor=0.07 and its
-// own ?spot and ?arrive).
-const ROOM_URL = params.get('scan') || './assets/stage-400k.sog';
-const FLOOR = num('floor', 0);
+const VIDEO_LAST_RESORT = IS_HEADSET && !params.get('video') ? [COPY_SRC] : [];
+// The world past the portal: the room scan, 400k splats (Ilia, Nov 16), its
+// floor lifted 7 cm to meet the real one. Ilia, Nov 18: "back to room splat".
+// ?world=stage is his "Home outside" splat of the same day instead: two bamboo
+// huts with an opening between them, a deck in front of it, a flower garden
+// and palms all round (400k of its 3.7M splats, no SH, shifted so the deck is
+// at the real floor). ?scan=<url> and ?floor=<metres> override.
+const STAGE = params.get('world') === 'stage';
+const ROOM_URL = params.get('scan') || (STAGE ? './assets/stage-400k.sog' : './assets/room-400k.sog');
+const FLOOR = num('floor', STAGE ? 0 : 0.07);
 // Quest settings Ilia picked on the Jane splat test page (Nov 16): splat
 // budget 500k, 80% resolution, strongest fixed foveation, and the "fast"
 // preset. Each takes the same URL option as on that page.
@@ -76,23 +81,36 @@ const SPARK_KNOBS = {
 };
 const FB = Math.min(1.5, Math.max(0.3, num('fb', 0.8)));
 const FFR = Math.min(1, Math.max(0, num('ffr', 1)));
-// Where Jane stands, in the world's own x,z: its origin, on the deck in front
-// of the opening between the huts (Ilia, Nov 18: "Jane position 0,0,0").
-const JANE_SPOT = new THREE.Vector2(...(params.get('spot') || '0,0').split(',').map(Number));
+// Where Jane stands, in the scan's own x,z. In the room: clear floor right of
+// the coffee table, 0.5 m further right than the first spot (Ilia, Nov 16),
+// as on the test page. On the stage: its origin, on the deck in front of the
+// opening between the huts (Ilia, Nov 18: "Jane position 0,0,0").
+const JANE_SPOT = new THREE.Vector2(...(params.get('spot') || (STAGE ? '0,0' : '-0.68,-1.93')).split(',').map(Number));
 const MUSIC_VOLUME = Math.min(1, Math.max(0, num('music', 0.55)));
 
+// Room scan landmarks, as (x, z) in the scan's own coordinates. The scans have
+// y pointing down with the floor at y = 0, so they get flipped upright.
+const ENTRANCE = new THREE.Vector2(2.25, 0.2);   // centre of the doorway in the long wall
+const TARGETS = {
+  table: { at: new THREE.Vector2(-0.47, -3.0), stop: 1.4 }, // coffee table between the pink poufs
+  desk: { at: new THREE.Vector2(-1.63, 0.18), stop: 1.4 },  // desk in front of the window
+};
+const TARGET = TARGETS[params.get('to')] || TARGETS.table;
 const PORTAL_DIST = 1.05; // portal distance in front of the player
 
-// The flight, as (x, z) in the world's own coordinates (y points down with the
-// deck at y = 0, so the world gets flipped upright; the huts' opening faces +x).
-// It comes in over the flower garden, level with the deck, straight at the
-// huts, and stops over the last flowers 0.35 m short of the deck's knee-high
-// front rail (so nobody flies through it), 1.85 m from Jane, who stands 20
-// degrees to the right (Ilia, Nov 16: Jane to the right), so the play button
-// straight ahead doesn't cover her. Ilia, Nov 18: "shorter but slower": 2.4 m
-// at 0.3 m/s. ?arrive=x,z, ?fly=<metres> and ?speed=<m/s> change it.
-const FLY_DIR = new THREE.Vector2(-1, 0);
-const ARRIVAL_SCAN = new THREE.Vector2(...(params.get('arrive') || '1.75,-0.64').split(',').map(Number));
+// Flight line. In the room: from the doorway toward the target, ending
+// TARGET.stop short of it, where Jane and the play button are set up around
+// the player. On the stage (whose huts' opening faces +x): in over the flower
+// garden, level with the deck, straight at the huts, stopping over the last
+// flowers 0.35 m short of the deck's knee-high front rail, 1.85 m from Jane,
+// who stands 20 degrees to the right. Ilia, Nov 18: "shorter but slower": it
+// is 2.4 m at 0.3 m/s, so in the room it starts just inside the doorway and
+// the portal opens onto the room itself. ?arrive=x,z (the scan's x,z),
+// ?fly=<metres> and ?speed=<m/s> change it.
+const FLY_DIR = STAGE ? new THREE.Vector2(-1, 0) : new THREE.Vector2().subVectors(TARGET.at, ENTRANCE).normalize();
+const ARRIVAL_SCAN = params.get('arrive')
+  ? new THREE.Vector2(...params.get('arrive').split(',').map(Number))
+  : STAGE ? new THREE.Vector2(1.75, -0.64) : TARGET.at.clone().addScaledVector(FLY_DIR, -TARGET.stop);
 const FLY_DIST = Math.max(1.2, num('fly', 2.4));
 const SCAN_START = ARRIVAL_SCAN.clone().addScaledVector(FLY_DIR, -FLY_DIST);
 
@@ -258,7 +276,8 @@ ring.add(sparks);
 
 // worldRoot follows the anchor; flyGroup slides the room toward the player;
 // alignGroup turns the flight line to face forward; scanGroup puts the start
-// point (over the flower garden) at the player's feet.
+// point (just inside the room's doorway, or over the stage's flower garden)
+// at the player's feet.
 const worldRoot = new THREE.Group();
 scene.add(worldRoot);
 const flyGroup = new THREE.Group();
@@ -292,15 +311,16 @@ const sky = new THREE.Mesh(skyGeo, maskToPortal(new THREE.MeshBasicMaterial({
 sky.renderOrder = -50;
 worldRoot.add(sky);
 
-// Outside the world, all round: Ilia's 360 render of the same place (Nov 18,
-// "Mono_NewLevelSequence1", 16000 px square, here 6144x3072), turned with the
-// world so its palms and sky carry on from the splats: the middle of the
-// picture looks over the deck at the huts. ?outside=<url> tries another
-// equirectangular JPEG or PNG (assets/outside-8k.jpg is the same at
-// 8192x4096), ?outside=off keeps the plain sky, and ?outsideturn=<degrees>
-// turns it further. No mipmaps: at 17 texels a degree it is about as sharp as
-// the headset shows it, and that saves 24 MB of graphics memory. It is in
-// before the Start buttons unlock.
+// Outside the world, all round: Ilia's 360 render (Nov 18,
+// "Mono_NewLevelSequence1", 16000 px square, here 6144x3072) of the place the
+// stage splat shows. It turns with the world (alignGroup), so the middle of
+// the picture lies ahead along the flight: on the stage that is over the deck
+// at the huts, where its palms and sky carry on from the splats.
+// ?outside=<url> tries another equirectangular JPEG or PNG
+// (assets/outside-8k.jpg is the same at 8192x4096), ?outside=off keeps the
+// plain sky, and ?outsideturn=<degrees> turns it further. No mipmaps: at 17
+// texels a degree it is about as sharp as the headset shows it, and that
+// saves 24 MB of graphics memory. It is in before the Start buttons unlock.
 const OUTSIDE_URL = params.get('outside') || './assets/outside.jpg';
 const outsideReady = OUTSIDE_URL === 'off' ? Promise.resolve() : new THREE.TextureLoader().loadAsync(OUTSIDE_URL).then((tex) => {
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -697,6 +717,7 @@ const video = new Video180({
   hz: params.has('hz') ? num('hz', 0) : undefined,
   keepFrom: num('disk', 700) * 1e6,
   known: [...new Set([ORIGINAL_SRC, LIGHT_SRC, COPY_SRC, ...VIDEO_SRC])],
+  lastResort: VIDEO_LAST_RESORT,
 });
 video.ready.catch((err) => console.warn('Video not available:', err.message || err));
 // The video starts loading as soon as the opening has what it needs (the
@@ -1392,7 +1413,7 @@ const sceneApi = {
     return { position: anchor.localToWorld(buttonSpot(offset)), eyes: anchor.localToWorld(buttonEyes()), gap: BUTTON_GAP };
   },
   // Where the player stands after the flight, in world space: feet position
-  // and horizontal forward direction (toward the huts).
+  // and horizontal forward direction (along the flight).
   arrivalPose() {
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(anchor.quaternion);
     return { position: anchor.localToWorld(new THREE.Vector3(0, 0, -FLY_DIST)), forward };
