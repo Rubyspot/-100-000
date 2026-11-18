@@ -1,15 +1,16 @@
 // $100,000 opening.
 // Mixed reality: "Seagulls Love Too" starts, a portal opens in the room's
 // entrance, a seagull comes out and settles on the bottom of its rim. A $100
-// bill flutters down from the ceiling to it, the gull jumps up, catches it and
-// flies back in, and the player flies through the portal into the room scan.
-// Jane is there already, and goes through her poses, 3 s each (yoga, surf,
-// singing, heart). The play ball starts the 180 video, with palm-sized
-// controls (back 10 s, pause, close) at the lower edge of the picture while
-// it plays. After the video Jane offers the jetski race: a toy
-// jetski floats in front of the player, and touching it starts the race
-// (jetski/race.js) right here, in the same session. Back from the race, the
-// video's play ball floats beside the jetski.
+// bill flutters down from the ceiling to it, the gull jumps up, catches it,
+// turns round and flies back in, and the player flies through the portal,
+// over a flower garden, to a deck in front of two bamboo huts. Jane is there
+// already, on the deck, and goes through her poses, 3 s each (sing, surf,
+// heart). The play ball starts the 180 video, with palm-sized controls (back
+// 10 s, pause, close) beside the picture while it plays. After the video
+// Jane offers the jetski race: a toy jetski stands in front of the player,
+// and touching it starts the race (jetski/race.js) right here, in the same
+// session. Back from the race, the video's play button stands beside the
+// jetski.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
@@ -51,10 +52,14 @@ const VIDEO_SRC = (() => {
   if (asked.length) return asked.flatMap((s) => named[s.toLowerCase()] || [s]);
   return IS_HEADSET ? [ORIGINAL_SRC, LIGHT_SRC, COPY_SRC] : [COPY_SRC];
 })();
-// Room scan: 400k splats (Ilia, Nov 16), its floor lifted 7 cm to meet the
-// real one. ?scan=<url> and ?floor=<metres> override.
-const ROOM_URL = params.get('scan') || './assets/room-400k.sog';
-const FLOOR = num('floor', 0.07);
+// The world past the portal (Ilia, Nov 18, "Home outside"): two bamboo huts
+// with an opening between them, a deck in front of it, a flower garden and
+// palms all round. 400k of its 3.7M splats, no SH, shifted so the deck is at
+// the real floor (assets/stage-400k.sog). ?scan=<url> and ?floor=<metres>
+// override (the old room scan, assets/room-400k.sog, wants ?floor=0.07 and its
+// own ?spot and ?arrive).
+const ROOM_URL = params.get('scan') || './assets/stage-400k.sog';
+const FLOOR = num('floor', 0);
 // Quest settings Ilia picked on the Jane splat test page (Nov 16): splat
 // budget 500k, 80% resolution, strongest fixed foveation, and the "fast"
 // preset. Each takes the same URL option as on that page.
@@ -71,29 +76,23 @@ const SPARK_KNOBS = {
 };
 const FB = Math.min(1.5, Math.max(0.3, num('fb', 0.8)));
 const FFR = Math.min(1, Math.max(0, num('ffr', 1)));
-// Where Jane stands, in room-scan x,z: clear floor right of the coffee table,
-// 0.5 m further right than the first spot (Ilia, Nov 16). Same as the test page.
-const JANE_SPOT = new THREE.Vector2(...(params.get('spot') || '-0.68,-1.93').split(',').map(Number));
+// Where Jane stands, in the world's own x,z: its origin, on the deck in front
+// of the opening between the huts (Ilia, Nov 18: "Jane position 0,0,0").
+const JANE_SPOT = new THREE.Vector2(...(params.get('spot') || '0,0').split(',').map(Number));
 const MUSIC_VOLUME = Math.min(1, Math.max(0, num('music', 0.55)));
 
-// Room scan landmarks, as (x, z) in the scan's own coordinates. The scan has
-// y pointing down with the floor at y = 0, so it gets flipped upright.
-const ENTRANCE = new THREE.Vector2(2.25, 0.2);   // centre of the doorway in the long wall
-const TARGETS = {
-  table: { at: new THREE.Vector2(-0.47, -3.0), stop: 1.4 }, // coffee table between the pink poufs
-  desk: { at: new THREE.Vector2(-1.63, 0.18), stop: 1.4 },  // desk in front of the window
-};
-const TARGET = TARGETS[params.get('to')] || TARGETS.table;
 const PORTAL_DIST = 1.05; // portal distance in front of the player
 
-// Flight line: from the doorway toward the target, ending TARGET.stop short
-// of it, where Jane and the play button are set up around the player. Ilia,
-// Nov 18: "shorter but slower". It is 2.4 m at 0.3 m/s (it was 3.85 m from
-// just outside the doorway at 0.4 m/s), so it now starts just inside the
-// doorway and the portal opens onto the room itself. ?fly=<metres> and
-// ?speed=<m/s> change them.
-const FLY_DIR = new THREE.Vector2().subVectors(TARGET.at, ENTRANCE).normalize();
-const ARRIVAL_SCAN = TARGET.at.clone().addScaledVector(FLY_DIR, -TARGET.stop);
+// The flight, as (x, z) in the world's own coordinates (y points down with the
+// deck at y = 0, so the world gets flipped upright; the huts' opening faces +x).
+// It comes in over the flower garden, level with the deck, straight at the
+// huts, and stops over the last flowers 0.35 m short of the deck's knee-high
+// front rail (so nobody flies through it), 1.85 m from Jane, who stands 20
+// degrees to the right (Ilia, Nov 16: Jane to the right), so the play button
+// straight ahead doesn't cover her. Ilia, Nov 18: "shorter but slower": 2.4 m
+// at 0.3 m/s. ?arrive=x,z, ?fly=<metres> and ?speed=<m/s> change it.
+const FLY_DIR = new THREE.Vector2(-1, 0);
+const ARRIVAL_SCAN = new THREE.Vector2(...(params.get('arrive') || '1.75,-0.64').split(',').map(Number));
 const FLY_DIST = Math.max(1.2, num('fly', 2.4));
 const SCAN_START = ARRIVAL_SCAN.clone().addScaledVector(FLY_DIR, -FLY_DIST);
 
@@ -259,7 +258,7 @@ ring.add(sparks);
 
 // worldRoot follows the anchor; flyGroup slides the room toward the player;
 // alignGroup turns the flight line to face forward; scanGroup puts the start
-// point (just outside the doorway) at the player's feet.
+// point (over the flower garden) at the player's feet.
 const worldRoot = new THREE.Group();
 scene.add(worldRoot);
 const flyGroup = new THREE.Group();
@@ -293,15 +292,20 @@ const sky = new THREE.Mesh(skyGeo, maskToPortal(new THREE.MeshBasicMaterial({
 sky.renderOrder = -50;
 worldRoot.add(sky);
 
-// Outside the room: a 360 photo of a tropical island all round, in place of
-// the plain sky (Ilia, Nov 17: "so it's not just black"). Until his photo
-// comes, assets/outside.jpg is a 360 view of the race's lagoon from its start
-// beach, the lagoon ahead. Any 2:1 equirectangular JPEG or PNG works:
-// ?outside=<url> tries another, ?outside=off keeps the plain sky, and
-// ?outsideturn=<degrees> turns it. It is in before the Start buttons unlock.
+// Outside the world, all round: Ilia's 360 render of the same place (Nov 18,
+// "Mono_NewLevelSequence1", 16000 px square, here 6144x3072), turned with the
+// world so its palms and sky carry on from the splats: the middle of the
+// picture looks over the deck at the huts. ?outside=<url> tries another
+// equirectangular JPEG or PNG (assets/outside-8k.jpg is the same at
+// 8192x4096), ?outside=off keeps the plain sky, and ?outsideturn=<degrees>
+// turns it further. No mipmaps: at 17 texels a degree it is about as sharp as
+// the headset shows it, and that saves 24 MB of graphics memory. It is in
+// before the Start buttons unlock.
 const OUTSIDE_URL = params.get('outside') || './assets/outside.jpg';
 const outsideReady = OUTSIDE_URL === 'off' ? Promise.resolve() : new THREE.TextureLoader().loadAsync(OUTSIDE_URL).then((tex) => {
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
   renderer.initTexture(tex);
   const geo = new THREE.SphereGeometry(60, 64, 32);
   geo.scale(-1, 1, 1); // seen from inside without being mirrored
@@ -310,7 +314,9 @@ const outsideReady = OUTSIDE_URL === 'off' ? Promise.resolve() : new THREE.Textu
   Object.assign(sky.material, { map: tex, vertexColors: false, side: THREE.FrontSide, toneMapped: false });
   sky.material.needsUpdate = true;
   sky.position.y = 1.5; // its horizon at eye height
-  sky.rotation.y = THREE.MathUtils.degToRad(num('outsideturn', 0));
+  // The world's own turn (alignGroup), so the picture stays lined up with it.
+  sky.rotation.y = new THREE.Euler().setFromQuaternion(alignGroup.quaternion, 'YXZ').y
+    + THREE.MathUtils.degToRad(num('outsideturn', 0));
 }).catch(() => console.info(`outside: no ${OUTSIDE_URL}, the plain sky stays`));
 
 maskToPortal(spark.material);
@@ -319,7 +325,7 @@ const room = new SplatMesh({
   url: ROOM_URL,
   lod: USE_LOD ? true : undefined,
   onProgress: (e) => {
-    if (e.lengthComputable) statusEl.textContent = `Loading room scan ${Math.round((e.loaded / e.total) * 100)}%`;
+    if (e.lengthComputable) statusEl.textContent = `Loading the world ${Math.round((e.loaded / e.total) * 100)}%`;
   },
 });
 room.rotation.x = Math.PI;
@@ -903,12 +909,11 @@ function portalPoseAt(t, fly) {
 // Gull paths, through the gull's body (anchor space).
 const gullOutCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
 const gullSwoopCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
-const gullClimbCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
-const gullDiveCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
-// The way off with the bill: a climb, a stall turn at the top (it hangs
-// nose up and swings round, as gulls do in a breeze) and a dive into the
-// portal. A U-turn that tight in level flight is beyond any bird.
-const EXIT_CLIMB = 0.24, EXIT_TURN = 0.42; // shares of the way off
+// The way off with the bill (Ilia, Nov 18: "seagull shouldn't fly up, just
+// pick up the bill uturn and fly back"): a few hard beats to get going from
+// the top of its jump, a level U-turn round to the viewer's right in front of
+// the portal, banked hard, and back in through the disk and away.
+const gullExitCurve = new THREE.CatmullRomCurve3([], false, 'centripetal');
 // Where it catches the bill it's flying up and toward the viewer, a little to the right.
 const SWOOP_END = new THREE.Vector3(0.3, 0.62, 0.72).normalize();
 const ZERO = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0), X_AXIS = new THREE.Vector3(1, 0, 0);
@@ -1034,21 +1039,18 @@ function startSequence() {
     sit.clone().lerp(grabBody, 0.45).add(new THREE.Vector3(0.01, -0.02, -0.02)),
     grabBody.clone(),
   ];
-  // Off with it: on up the way it jumped, a stall turn at the top, and a
-  // dive in through the middle of the disk, curving away into the room.
-  const apex = new THREE.Vector3(grabBody.x + 0.06, Math.min(py + 0.42, grabBody.y + 0.4), grabBody.z + 0.14);
-  gullClimbCurve.points = [
+  // Off with it: levelling out of the jump, a U-turn about 0.25 m across at
+  // the height it caught the bill (its nearest point 0.65 m from the eyes),
+  // back in through the disk right of the middle, and away into the world.
+  const lvl = grabBody.y + 0.05;
+  gullExitCurve.points = [
     grabBody.clone(),
-    grabBody.clone().addScaledVector(SWOOP_END, 0.14),
-    apex.clone().add(new THREE.Vector3(-0.01, -0.1, -0.05)),
-    apex.clone(),
-  ];
-  gullDiveCurve.points = [
-    apex.clone(),
-    new THREE.Vector3(apex.x * 0.5, py + 0.16, pz + 0.12),
-    new THREE.Vector3(-0.12, py + 0.1, pz - 0.6),
-    new THREE.Vector3(-0.5, py + 0.35, pz - 2.4),
-    new THREE.Vector3(-0.9, py + 0.8, pz - 4.2),
+    new THREE.Vector3(grabBody.x + 0.1, lvl, grabBody.z + 0.17),
+    new THREE.Vector3(0.27, lvl, Math.min(pz + 0.45, grabBody.z + 0.36)),
+    new THREE.Vector3(0.46, lvl - 0.01, pz + 0.21),
+    new THREE.Vector3(0.18, lvl - 0.03, pz - 0.2),
+    new THREE.Vector3(-0.15, lvl, pz - 1.4),
+    new THREE.Vector3(-0.6, lvl + 0.15, pz - 3.2),
   ];
   state.gullAway = false;
   gullVoice.setLevel(1);
@@ -1186,34 +1188,16 @@ function update(t, dt) {
       // Off through the portal with the bill; its sounds fade as it goes.
       const dur = T_GULL_GONE - T_GRAB;
       const k = clamp01((T - T_GRAB) / dur);
-      let body, q, beats, beat = BEAT_HOVER;
-      if (k < EXIT_CLIMB) {
-        // Climbing on, hard beats, slowing to a hang at the top.
-        const c = k / EXIT_CLIMB, u = 1 - (1 - c) * (1 - c);
-        body = gullClimbCurve.getPointAt(u, v1);
-        q = facing(SWOOP_END).slerp(flightQuat(gullClimbCurve, u, 0, 0.35 * c, tmpQuat), smooth01(c / 0.5));
-        beats = 1;
-      } else if (k < EXIT_TURN) {
-        // The stall turn: hanging nose up, it swings round to face the
-        // portal and tips over into the dive, wings spread.
-        const c = (k - EXIT_CLIMB) / (EXIT_TURN - EXIT_CLIMB);
-        body = gullDiveCurve.getPoint(0, v1);
-        body.y += 0.03 * Math.sin(Math.PI * c);
-        const top = flightQuat(gullClimbCurve, 0.999, 0, 0.35);
-        const yaw = tmpQuat.setFromAxisAngle(UP, Math.PI * smooth01(c / 0.8) * (body.x >= 0 ? 1 : -1));
-        q = yaw.multiply(top);
-        q.slerp(flightQuat(gullDiveCurve, 0.02, 1.5), smooth01((c - 0.55) / 0.45));
-        beats = c < 0.6 ? 0.6 : 0.2;
-      } else {
-        // The dive: wings held half open, gathering speed, one or two beats
-        // as it levels out inside, banking into the curve away.
-        const c = (k - EXIT_TURN) / (1 - EXIT_TURN), u = c * c * (1.6 - 0.6 * c);
-        const speed = (gullDiveCurve.getLength() * c * (3.2 - 1.8 * c)) / (dur * (1 - EXIT_TURN));
-        body = gullDiveCurve.getPointAt(u, v1);
-        q = flightQuat(gullDiveCurve, u, speed);
-        beats = c < 0.45 ? 0.1 : c < 0.75 ? 0.9 : 0.35;
-        beat = BEAT;
-      }
+      // From still at the top of its jump it gathers speed all the way
+      // (about 1.2 m/s into the turn, 1.6 m/s through the portal, 2 m/s away),
+      // banked by the turn's tightness, beating hard to get going, then
+      // gliding in through the portal and beating on away.
+      const u = k * k * (1.6 - 0.6 * k);
+      const speed = (gullExitCurve.getLength() * k * (3.2 - 1.8 * k)) / dur;
+      const body = gullExitCurve.getPointAt(u, v1);
+      const q = facing(SWOOP_END).slerp(flightQuat(gullExitCurve, u, speed, 0, tmpQuat), smooth01(k / 0.22));
+      const beats = k < 0.3 ? 1 : k < 0.45 ? 0.6 : k < 0.7 ? 0.15 : 0.5;
+      const beat = k < 0.3 ? BEAT_HOVER : BEAT;
       gu.effort = THREE.MathUtils.damp(gu.effort ?? beats, beats, 9, dt);
       poseGull(dt, gu.effort, beat, 0, !state.gullAway);
       placeGull(body, q, 0);
@@ -1408,7 +1392,7 @@ const sceneApi = {
     return { position: anchor.localToWorld(buttonSpot(offset)), eyes: anchor.localToWorld(buttonEyes()), gap: BUTTON_GAP };
   },
   // Where the player stands after the flight, in world space: feet position
-  // and horizontal forward direction (toward the coffee table).
+  // and horizontal forward direction (toward the huts).
   arrivalPose() {
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(anchor.quaternion);
     return { position: anchor.localToWorld(new THREE.Vector3(0, 0, -FLY_DIST)), forward };
@@ -1503,7 +1487,7 @@ renderer.setAnimationLoop((time, frame) => {
 // Jane's first pose is in before the start (she's in the room from the
 // first moment); her other poses keep loading in the background.
 const sceneReady = Promise.all([
-  room.initialized.catch((err) => { throw new Error(`room scan: ${err.message || err}`); }),
+  room.initialized.catch((err) => { throw new Error(`world: ${err.message || err}`); }),
   gullReady.catch((err) => { throw new Error(`seagull: ${err.message || err}`); }),
   billReady.catch((err) => { throw new Error(`bill: ${err.message || err}`); }),
   splatJane?.firstReady,
