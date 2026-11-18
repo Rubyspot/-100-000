@@ -30,16 +30,18 @@ const num = (name, def) => {
 const USE_LOD = params.get('lod') !== '0';
 const DEBUG = params.has('debug');
 const FLY_SPEED = num('speed', 0.3); // m/s, constant
-// Untouched 8K60 HEVC master (tools/segment-original.sh, 130 Mbit/s): too big
-// for GitHub Pages (1 GB a site), so it lives on the video-8k branch and
-// streams from GitHub's raw file server. Next to it, in light/, is the same 8K
-// picture at 60 Mbit/s (tools/encode-8k-light.sh) for connections that can't
-// keep up with the master. The headset loads the best of the two it can ahead
-// of time and plays the one that will run without stalling (video.js); the 4K
-// H.264 copy in ./video/ takes over where HEVC can't be decoded or the
-// connection is too slow for both, and is all a flat screen or a phone needs.
+// Untouched 8K60 HEVC master of the full 2:34 cut (tools/segment-original.sh,
+// 130 Mbit/s, 2.5 GB): too big for GitHub Pages (1 GB a site), so it lives in
+// the full/ folder of the video-8k branch and streams from GitHub's raw file
+// server. Next to it, in full/light/, is the same 8K picture at 60 Mbit/s
+// (tools/encode-8k-light.sh) for connections that can't keep up with the
+// master. The headset loads the best of the two it can ahead of time and plays
+// the one that will run without stalling (video.js); the 4K H.264 copy in
+// ./video/ takes over where HEVC can't be decoded or the connection is too slow
+// for both, and is all a flat screen or a phone needs. (The branch's root and
+// its light/ still hold the 66 s demo cut, which nothing plays any more.)
 // ?video=original, light, 8k (both 8K ones) or 4k picks; ?video=<folder>/,<folder>/ lists others.
-const ORIGINAL_SRC = 'https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/';
+const ORIGINAL_SRC = 'https://raw.githubusercontent.com/Rubyspot/-100-000/video-8k/full/';
 const LIGHT_SRC = `${ORIGINAL_SRC}light/`;
 const COPY_SRC = './video/';
 const IS_HEADSET = /OculusBrowser|Quest/i.test(navigator.userAgent);
@@ -680,13 +682,15 @@ function makeLabel(width = 512, height = 128, size = 46) {
 
 // ?edge=6: degrees the dark surround reaches into the picture's rim. ?hz=90:
 // display refresh rate while the video plays (0 leaves it alone; by default
-// one the video's frame rate divides, 120 for 60 fps). ?disk=300: sources of
-// at least this many MB are kept on disk between visits.
+// one the video's frame rate divides, 120 for 60 fps). ?disk=700: sources of
+// at least this many MB are kept on disk between visits. What an earlier visit
+// kept on disk for any other folder (an older video's) is deleted.
 const video = new Video180({
   renderer, scene, src: VIDEO_SRC,
   edge: num('edge', 6),
   hz: params.has('hz') ? num('hz', 0) : undefined,
-  keepFrom: num('disk', 300) * 1e6,
+  keepFrom: num('disk', 700) * 1e6,
+  known: [...new Set([ORIGINAL_SRC, LIGHT_SRC, COPY_SRC, ...VIDEO_SRC])],
 });
 video.ready.catch((err) => console.warn('Video not available:', err.message || err));
 // The video starts loading as soon as the opening has what it needs (the
