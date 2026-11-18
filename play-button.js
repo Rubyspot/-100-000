@@ -74,11 +74,14 @@ function drawFace(g, w) {
     g.beginPath(); g.moveTo(x0, c - s * 0.98); g.lineTo(x1, c); g.lineTo(x0, c + s * 0.98); g.closePath();
   };
   g.lineJoin = 'round'; g.lineWidth = s * 0.26;
+  g.fillStyle = '#ffffff'; g.strokeStyle = '#ffffff';
+  // Its shadow first, then the arrow again on top (the shadow of the round
+  // outline would otherwise fall inside it).
   g.save();
   g.shadowColor = 'rgba(0, 0, 0, 0.55)'; g.shadowBlur = 22; g.shadowOffsetY = 8;
-  g.fillStyle = '#ffffff'; g.strokeStyle = '#ffffff';
   tri(); g.fill(); g.stroke();
   g.restore();
+  tri(); g.fill(); g.stroke();
   // Sheen: a soft lighter band across the top half.
   g.save();
   g.beginPath(); g.arc(c, c, c * 0.88, 0, Math.PI * 2); g.clip();

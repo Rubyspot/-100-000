@@ -59,14 +59,15 @@ function drawPlate(g, w, h, label, hint) {
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillStyle = 'rgba(255, 255, 255, 0.92)';
   g.font = '600 70px system-ui, sans-serif';
-  g.fillText(label, x, h / 2 - 0.009 * px, 0.1 * px);
+  g.fillText(label, x, hint.text ? h / 2 - 0.009 * px : h / 2, 0.1 * px);
+  if (!hint.text) return; // the word alone
   g.fillStyle = hint.active ? GOLD : 'rgba(255, 255, 255, 0.55)';
   g.font = '500 31px system-ui, sans-serif';
   g.fillText(hint.text, x, h / 2 + 0.024 * px, 0.104 * px);
 }
 
 // label / idle / busy: the word on the plate and the line under it, before
-// and while it is held. hold: seconds it takes.
+// and while it is held ('' for the word alone). hold: seconds it takes.
 export function createQuitButton({ label = 'Quit', idle = 'Hold to quit', busy = 'Quitting…', hold = 1.5 } = {}) {
   const root = new THREE.Group();
   root.visible = false;
