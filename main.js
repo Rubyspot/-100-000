@@ -326,19 +326,20 @@ scanGroup.add(room);
 
 // Jane's splats stand in the room at JANE_SPOT, turned toward the point where
 // the flight ends (jane/splat-jane.js has the particle transformation).
-// Scan (x, z) is (x, -z) in scanGroup. Ilia's five poses (Nov 17): she is
-// already in the room in the first one while the player flies in (yoga),
-// goes through the next ones on arrival, ?hold=3 seconds each (surf, sing,
-// heart), and stays on the last while she offers the video. After the video
-// she forms again in the jetski pose, offering the race. ?poses=yoga,surf,
-// sing,heart and ?after=jetski change them (also: new, the shaka pose). A
-// pose whose file isn't in assets/jane/ yet is skipped.
+// Scan (x, z) is (x, -z) in scanGroup. Ilia's order (Nov 18: "first comes
+// sing, then surf, then heart and video play button appears, jetski pose
+// only for game"): she is already in the room singing while the player flies
+// in, turns into surf on arrival, ?hold=3 seconds, then heart, where the play
+// button comes up, and she stays in heart while she offers the video and
+// after it (the jetski pose is the race's). ?poses=sing,surf,heart changes
+// the order, ?after=<pose> adds a pose after the video (also: yoga, new, the
+// shaka pose). A pose whose file isn't in assets/jane/ is skipped.
 const poseList = (name, def) => {
   const list = (params.get(name) || '').split(',').map((s) => s.trim()).filter((k) => JANE_SCANS[k]);
   return list.length ? list : def;
 };
-const JANE_POSES = poseList('poses', ['yoga', 'surf', 'sing', 'heart']);
-const JANE_AFTER = poseList('after', ['jetski'])[0];
+const JANE_POSES = poseList('poses', ['sing', 'surf', 'heart']);
+const JANE_AFTER = poseList('after', [])[0];
 const splatJane = params.get('jane') === 'off' ? null : createSplatJane({
   parent: scanGroup,
   spot: new THREE.Vector3(JANE_SPOT.x, 0, -JANE_SPOT.y),
@@ -348,7 +349,7 @@ const splatJane = params.get('jane') === 'off' ? null : createSplatJane({
   sparks: num('sparks', 0.35), // share of splats that fly as sparks in her transformation
   hold: Math.max(0.5, num('hold', 3)),
   morph: Math.max(0.5, num('morph', 2)),
-  scans: [...JANE_POSES, JANE_AFTER].map((k) => JANE_SCANS[k]),
+  scans: [...JANE_POSES, ...(JANE_AFTER ? [JANE_AFTER] : [])].map((k) => JANE_SCANS[k]),
   chainEnd: JANE_POSES.length - 1,
   // The play button comes up as she changes into her last pose.
   onLastPose: () => onJaneLastPose(),
@@ -701,17 +702,18 @@ if (params.get('preload') !== '0') {
   });
   Promise.allSettled([unlocked, splatJane?.ready]).then(() => video.preload());
 }
-// Back 10 s, pause / play and close, within reach under the middle of the
-// picture for as long as the video plays, 0.3 m under the eyes and close to
-// the body so they cover little of it (Ilia, Nov 18). ?controls=0.3,0.28:
-// how far below and ahead of the eyes the plate's middle is, metres.
+// Back 10 s, pause / play and close, within reach for as long as the video
+// plays: low at the right, 45 degrees round from the middle of the picture
+// (Ilia, Nov 18). ?controls=0.4,0.32,45: how far below and out from the eyes
+// the plate's middle is (metres), and how far round to the right (degrees).
 const CONTROLS_AT = (params.get('controls') || '').split(',').map(parseFloat);
 const videoControls = new VideoControls({
   scene, listener,
   onBack: () => video.seekBy(-10),
   onToggle: () => video.togglePause(),
   onClose: () => video.stop(),
-  ...(CONTROLS_AT.length === 2 && CONTROLS_AT.every(Number.isFinite) ? { below: CONTROLS_AT[0], ahead: CONTROLS_AT[1] } : {}),
+  ...(CONTROLS_AT.length >= 2 && CONTROLS_AT.every(Number.isFinite)
+    ? { below: CONTROLS_AT[0], ahead: CONTROLS_AT[1], ...(CONTROLS_AT.length > 2 ? { angle: CONTROLS_AT[2] } : {}) } : {}),
 });
 
 // The play button (play-button.js, Ilia, Nov 18: "look better"). It comes up
@@ -742,8 +744,10 @@ function startVideo() {
   setTimeout(() => {
     worldRoot.visible = spark.visible = false;
     playBall.visible = false;
-    // Under the middle of the picture, which faces the way the room does.
-    videoControls.show(renderer.xr.isPresenting ? renderer.xr.getCamera() : camera, renderer.xr.isPresenting,
+    // Low at the right of the picture, which faces the way the room does,
+    // measured from between the eyes (the XR camera stands a few centimetres
+    // behind them, which turned 45 degrees into 51).
+    videoControls.show(renderer.xr.isPresenting ? eyesInWorld() : camera, renderer.xr.isPresenting,
       new THREE.Vector3(0, 0, -1).applyQuaternion(pose.quaternion));
     window.dispatchEvent(new Event('scene:video-start'));
     video.play(pose, rig).catch((err) => {
@@ -950,14 +954,50 @@ function perchBody(pp, quat) {
   return perchPoint(pp).add(u.bodyRest.clone().sub(u.feet).applyQuaternion(quat));
 }
 
+// The head's pose in the rig's space, where the headset reports it. In the
+// headset the XR camera's own pose is last frame's, with the rig as it was
+// then: from a session before, the rig may still stand where that one's
+// flight ended, and the portal came up metres away (Ilia, Nov 18: "portal
+// should be spawn always at same distance from player"). So it is read from
+// the eyes' views, between the two.
+const _eye = new THREE.Vector3(), _v1 = new THREE.Vector3();
+function headInRig(out) {
+  const eyes = renderer.xr.isPresenting ? renderer.xr.getCamera().cameras : [];
+  if (!eyes.length) {
+    camera.updateMatrix();
+    return out.copy(camera.matrix);
+  }
+  out.copy(eyes[0].matrix);
+  if (eyes.length > 1) {
+    _eye.setFromMatrixPosition(eyes[0].matrix).add(_v1.setFromMatrixPosition(eyes[1].matrix)).multiplyScalar(0.5);
+    out.setPosition(_eye);
+  }
+  return out;
+}
+
+// The head's pose in the world, as an object (for things placed around it).
+function eyesInWorld() {
+  const o = new THREE.Object3D();
+  o.matrixAutoUpdate = false;
+  rig.updateMatrixWorld(true);
+  o.matrix.multiplyMatrices(rig.matrixWorld, headInRig(new THREE.Matrix4()));
+  o.updateMatrixWorld(true);
+  return o;
+}
+
 function startSequence() {
-  // Anchor everything to the current head pose, yaw only.
+  // The headset hasn't drawn a frame of this session yet: no pose to go by.
+  if (renderer.xr.isPresenting && !renderer.xr.getCamera().cameras.length) {
+    setTimeout(startSequence, 100);
+    return;
+  }
+  // Anchor everything to the current head pose, yaw only: the portal is
+  // always PORTAL_DIST straight ahead.
   rig.position.set(0, 0, 0);
   rig.updateMatrixWorld(true);
-  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
-  cam.updateMatrixWorld(true);
-  const headPos = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
-  const fwd = new THREE.Vector3(0, 0, -1).transformDirection(cam.matrixWorld);
+  const head = headInRig(new THREE.Matrix4()); // the rig is at the origin: this is the world pose
+  const headPos = new THREE.Vector3().setFromMatrixPosition(head);
+  const fwd = new THREE.Vector3(0, 0, -1).transformDirection(head);
   const yaw = Math.atan2(-fwd.x, -fwd.z);
   anchor.position.set(headPos.x, 0, headPos.z);
   anchor.rotation.set(0, yaw, 0);
@@ -1519,6 +1559,7 @@ $('enterXr').addEventListener('click', async () => {
     // card is back. 'scene:session-end' tells Jane.
     session.addEventListener('end', () => {
       state.running = false;
+      rig.position.set(0, 0, 0);
       leaveRace(null, true);
       video.stop();
       videoControls.hide();

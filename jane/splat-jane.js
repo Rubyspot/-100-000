@@ -29,17 +29,19 @@ import { SplatMesh, dyno } from '@sparkjsdev/spark';
 // of those), so its height is 1.634 x 1.10. She stands with her feet apart in
 // it, which puts the top of her head at 1.72 m instead of 1.75.
 //
-// Ilia's five poses (Nov 17): yoga, surf, sing, heart (for the video) and
-// jetski. yoga, heart and jetski are still to come: drop each in as
-// assets/jane/<name>-150k.sog (tools/jane-pose.sh makes it from his .ply and
-// prints the four numbers to put here; until then they borrow surf's).
+// Ilia's poses: yoga, surf, sing, heart (for the video) and jetski (the
+// race's). The heart scan (Nov 18) is in the singing scan's units (her head
+// and shirt are the same size in both), so it has its height too. yoga and
+// jetski aren't here: drop each in as assets/jane/<name>-150k.sog
+// (tools/jane-pose.sh makes it from his .ply and prints the four numbers to
+// put here; until then they borrow surf's).
 const UNMEASURED = { height: 1.634, feetY: -0.065, cx: -0.003, cz: -0.19, aa: true };
 export const JANE_SCANS = {
   yoga: { url: './assets/jane/yoga-150k.sog', ...UNMEASURED },
   surf: { url: './assets/jane/surf-150k.sog', height: 1.634, feetY: -0.065, cx: -0.003, cz: -0.19, aa: true },
   new: { url: './assets/jane/new-150k.sog', height: 1.634, feetY: -0.07, cx: -0.092, cz: -0.147, aa: true },
   sing: { url: './assets/jane/sing-150k.sog', height: 1.80, feetY: -0.065, cx: -0.098, cz: -0.193, aa: true },
-  heart: { url: './assets/jane/heart-150k.sog', ...UNMEASURED },
+  heart: { url: './assets/jane/heart-150k.sog', height: 1.80, feetY: -0.066, cx: -0.105, cz: -0.188, aa: true },
   jetski: { url: './assets/jane/jetski-150k.sog', ...UNMEASURED },
 };
 

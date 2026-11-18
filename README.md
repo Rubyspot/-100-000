@@ -1,17 +1,18 @@
 # $100,000 – opening
 
 WebXR opening of the "$100,000" experience: mixed reality, "Seagulls Love Too"
-starts, a portal opens in the room's entrance and a seagull glides out of it and
+starts, a portal opens 1.05 m straight ahead of the player (every time, however
+the session before ended) onto the room's entrance and a seagull glides out of it and
 lands on the bottom of its rim. A $100 bill flutters down from the ceiling to it, the
 gull jumps up, catches it, climbs, turns and dives back in (its calls fade as it
 goes), then the player flies slowly through the portal into the room scan (2.4 m
 at 0.3 m/s, from just inside the doorway), which stands on a tropical beach (a
-360 photo all round it). Jane is in the room from the first moment, in her yoga
-pose. On arrival she goes through her other poses, 3 s each, changing through a
-swirl of particles: surfboard, singing into a microphone, then the heart pose,
-where she stays. The video's play button comes up as she changes into that last
-pose; it starts the 180° video, and the song fades out when it starts. After the
-video she comes back in the jetski pose and offers the jetski race, while "On My
+360 photo all round it). Jane is in the room from the first moment, singing
+into a microphone. On arrival she changes through a swirl of particles into her
+surfboard pose and, 3 s later, into the heart pose, where she stays. The video's
+play button comes up as she changes into that last pose; it starts the 180°
+video, and the song fades out when it starts. After the video she comes back in
+the heart pose (her jetski pose is the race's) and offers the jetski race, while "On My
 Own" plays quietly: a toy jetski stands where the play button was, and touching
 it starts the race ([jetski/](jetski/README.md)) in the same session. Leaving the
 race comes back to the room and to "On My Own", where she reacts to the result,
@@ -30,7 +31,7 @@ edge of the 180 picture, 0.55 m out and 0.25 m below the eyes. It is put there
 when the experience starts and travels with the player, and nothing moves it
 after that, the video included: a fingertip or a
 controller on it, or the trigger while pointing at it, held for 1.5 s while a
-gold ring fills, ends the session (`?quit=95` sets the angle, `?quit=off` leaves
+yellow ring fills over a white one, ends the session (`?quit=95` sets the angle, `?quit=off` leaves
 it out). Inside the room and during the video the player's hands are drawn as
 real hands (`hands.js`: the WebXR Input Profiles generic hand meshes in
 `vendor/hands/`, MIT, posed from the tracked joints); in mixed reality the real
@@ -63,11 +64,11 @@ hands show.
 URL options: `?debug` (fps and video source label in headset), `?to=desk` (fly to the desk instead of the coffee table), `?lod=0`
 (disable Spark LoD), `?scan=<url>` (load another .sog/.spz/.ply), `?floor=0.07` (lift the room scan, metres),
 `?spot=-0.68,-1.93` (where Jane stands, room-scan x,z), `?height=1.75` (Jane's height), `?sparks=0.35`
-(share of her splats that fly as sparks when she transforms, 1 = all), `?poses=yoga,surf,sing,heart` (her
-poses before the video, in order), `?after=jetski` (her pose after it), `?hold=3` (seconds on each pose),
+(share of her splats that fly as sparks when she transforms, 1 = all), `?poses=sing,surf,heart` (her
+poses before the video, in order), `?after=<pose>` (a pose after it; none by default), `?hold=3` (seconds on each pose),
 `?morph=2` (seconds each change takes), `?outside=<url>` (another 360 image outside the room; `off` keeps
-a plain sky), `?outsideturn=90` (turns it, degrees), `?controls=0.3,0.28` (the video controls this far
-below the eyes and out from them, metres), `?fly=2.4` and `?speed=0.3` (the flight through the portal:
+a plain sky), `?outsideturn=90` (turns it, degrees), `?controls=0.4,0.32,45` (the video controls this far
+below the eyes and out from them, metres, and this far round to the right, degrees), `?fly=2.4` and `?speed=0.3` (the flight through the portal:
 metres and m/s), `?quit=95` (the quit button's angle to the right; `off` hides it), `?music=0.55`
 (song volume, 0 mutes), `?between=0.5` ("On My Own" after the video and the race, as a part of that
 volume; 0 leaves it out), `?jane=off` (no Jane), `?autostart` (flat preview), `?race=0` (leave the jetski
@@ -93,12 +94,13 @@ the headset is asked for a display refresh rate that the video's frame rate
 divides (120 Hz for 60 fps), so frames step evenly; `?hz=90` asks for another
 rate and `?hz=0` leaves it alone.
 
-While it plays, three palm-sized buttons (8.4 cm) sit at the lower edge of the
-picture, within reach (`video-controls.js`): back 10 s, pause / play and close,
-with the playing time and the source's tag (8K+, 8K or 4K) above them. They stay
-on the whole time (Ilia, Nov 17), placed when the video starts close to the body
-so they cover little of the picture (Ilia, Nov 18): 0.3 m under the eyes and
-0.28 m out toward the middle of the picture, about 47° down (`?controls=0.3,0.28`).
+While it plays, three palm-sized buttons (8.4 cm) sit low at the player's right,
+within reach (`video-controls.js`): back 10 s, pause / play and close, with the
+playing time and the source's tag (8K+, 8K or 4K) above them. They stay on the
+whole time (Ilia, Nov 17), placed when the video starts 45° round to the right of
+the middle of the picture, 0.4 m under the eyes and 0.32 m out, turned to face
+the player (Ilia, Nov 18: "lower and on the right side 45 degrees";
+`?controls=0.4,0.32,45`).
 Press one with a fingertip, or point a controller (or a pinching hand) at it and
 pull the trigger (pinch); on a flat screen, click. Close goes back to the room
 and Jane.
@@ -169,8 +171,9 @@ from the race; `detail` is its result: money, time, won, bills, total, finished)
 
 ## Jane's poses
 
-Ilia's five poses (Nov 17): yoga (in the room before the player comes in), surf,
-sing and heart before the video, and jetski after it. Each is a 150k-splat SOG
+Ilia's order (Nov 18): sing (in the room before the player comes in), surf, then
+heart with the play button; she stays in heart after the video, and her jetski
+pose is only in the race. Yoga is no longer in the chain. Each is a 150k-splat SOG
 named after it in `assets/jane/` (`yoga-150k.sog` and so on); a pose whose file
 isn't there yet is skipped, so the chain runs with what is in. To add one from a
 Postshot scan:

@@ -1,14 +1,16 @@
 // Palm-sized controls for the 180° video: back 10 s, pause / play, close.
-// Three round buttons, 8.4 cm across, stand on a dark glass plate under the
-// middle of the picture, 0.3 m under the eyes and close to the body (0.28 m
-// out), so about 47 degrees below eye level and over little of the picture
-// (Ilia, Nov 18: "bring it up to the level it was but get it closer to the
-// body so it covers less of the video"). They stay there for the whole
-// video (Ilia, Nov 17). Press one
+// Three round buttons, 8.4 cm across, stand on a dark glass plate at the
+// viewer's right, 45 degrees round from the middle of the picture, 0.4 m
+// under the eyes and 0.32 m out, turned to face them: low and to the side,
+// off the middle of the picture, where the right hand rests (Ilia, Nov 18:
+// "Move UI for video lower and on the right side 45 degrees"). They stay
+// there for the whole video (Ilia, Nov 17). Press one
 // with a fingertip (hand tracking), or point a controller or a pinching hand
 // at it and pull the trigger / pinch. The plate also shows how far the video
 // has played.
 import * as THREE from 'three';
+
+const UP = new THREE.Vector3(0, 1, 0);
 
 const R = 0.042;           // button radius: 8.4 cm across, about a palm
 const GAP = 0.118;         // button centre to centre
@@ -107,11 +109,12 @@ function drawPlate(g, w, h, st = {}) {
 
 export class VideoControls {
   // onBack / onToggle / onClose are called when a button is pressed.
-  // below / ahead: where the plate's middle sits in the headset, metres under
-  // the eyes and in front of them.
-  constructor({ scene, listener, onBack, onToggle, onClose, below = 0.3, ahead = 0.28 }) {
+  // below / ahead / angle: where the plate's middle sits in the headset,
+  // metres under the eyes, metres out from them (level), and degrees round to
+  // the right of the middle of the picture.
+  constructor({ scene, listener, onBack, onToggle, onClose, below = 0.4, ahead = 0.32, angle = 45 }) {
     this.actions = [onBack, onToggle, onClose];
-    this.spot = { below, ahead };
+    this.spot = { below, ahead, angle };
     // root: on while a video plays. body: the plate and buttons.
     this.root = new THREE.Group();
     this.root.visible = false;
@@ -175,8 +178,8 @@ export class VideoControls {
 
   // head: the viewer's head (camera) object. forward: the direction the
   // picture faces (world space); without it, the way the head faces. In the
-  // headset the plate sits under the middle of the picture within reach; on
-  // a flat screen further out, so it is on the screen.
+  // headset the plate sits low at the right, within reach; on a flat screen
+  // under the middle of the picture and further out, so it is on the screen.
   show(head, xr = true, forward = null) {
     this.xr = xr;
     this.place(head, forward);
@@ -184,7 +187,8 @@ export class VideoControls {
     this.opacity = 0;
   }
 
-  // Put the plate below the eyes along `forward`, turned toward the viewer.
+  // Put the plate below the eyes, `angle` degrees right of `forward`, turned
+  // toward the viewer.
   place(head, forward = null) {
     head.updateMatrixWorld(true);
     const pos = new THREE.Vector3().setFromMatrixPosition(head.matrixWorld);
@@ -192,7 +196,8 @@ export class VideoControls {
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
     fwd.normalize();
-    const { ahead, below } = this.xr ? this.spot : { ahead: 0.62, below: 0.26 };
+    const { ahead, below, angle } = this.xr ? this.spot : { ahead: 0.62, below: 0.26, angle: 0 };
+    fwd.applyAxisAngle(UP, -THREE.MathUtils.degToRad(angle));
     this.root.position.copy(pos).addScaledVector(fwd, ahead);
     this.root.position.y -= below;
     this.root.lookAt(pos);

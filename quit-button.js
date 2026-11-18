@@ -8,7 +8,9 @@
 //
 // Quitting can't be undone, so a passing hand can't do it: a fingertip or a
 // controller on the button, or the trigger held while pointing at it, has to
-// stay for 1.5 s while a gold ring fills around it.
+// stay for 1.5 s while a yellow ring fills around it, over a white ring that
+// is always there, so it reads against any room (Ilia, Nov 18: "keep yellow
+// but background ring white for contrast").
 //
 //   const quit = createQuitButton();          // { root, place, show, update, hitRay, hit }
 //   rig.add(quit.root);                       // anything that moves with the viewer
@@ -22,6 +24,8 @@ const HIT_R = 0.06;         // touch radius, a little bigger than the button
 const PLATE_W = 0.2, PLATE_H = 0.092;
 const BX = -0.05;           // button centre on the plate; the words are to its right
 const GOLD = '#f2c45a';
+const RING_FILL = 0xffc61a;  // the ring that fills while it is held: yellow
+const RING_TRACK = 0xffffff; // and the ring under it: white
 const SEG = 48;             // segments of the ring that fills
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -109,12 +113,16 @@ export function createQuitButton({ label = 'Quit', idle = 'Hold to quit', busy =
   halo.position.z = -DEPTH / 2 + 0.001;
   halo.renderOrder = 9; halo.visible = false;
   const ringGeo = new THREE.RingGeometry(R + 0.005, R + 0.013, SEG, 1, Math.PI / 2, Math.PI * 2);
-  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xffd36a, transparent: true, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide }));
+  const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: RING_FILL, transparent: true, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide }));
   ring.scale.x = -1; // so it fills clockwise (both sides drawn, as this turns it over)
-  ring.position.z = DEPTH / 2 + 0.001;
-  ring.renderOrder = 10;
+  ring.position.z = DEPTH / 2 + 0.0015;
+  ring.renderOrder = 11;
   ringGeo.setDrawRange(0, 0);
-  button.add(body, faceMesh, halo, ring);
+  // The white ring under it, a little wider so it frames the yellow.
+  const track = new THREE.Mesh(new THREE.RingGeometry(R + 0.004, R + 0.014, SEG), new THREE.MeshBasicMaterial({ color: RING_TRACK, transparent: true, opacity: 0.92, depthWrite: false, fog: false, toneMapped: false }));
+  track.position.z = DEPTH / 2 + 0.001;
+  track.renderOrder = 10;
+  button.add(body, faceMesh, halo, track, ring);
   root.add(button);
 
   const inv = new THREE.Matrix4(), _p = new THREE.Vector3(), _c = new THREE.Vector3();
